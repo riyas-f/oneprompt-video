@@ -80,7 +80,7 @@ with image.imports():
     image=image,
     gpu="L40S",
     volumes=volumes,
-    scaledown_window=600,   # 10 min warm — daytime traffic hits a warm container
+    scaledown_window=120,   # 2 min warm — bursts stay warm, idle tail is cheap
     timeout=20 * 60,
     cpu=4.0,                # for parallel ffmpeg encodes + TTS thread
     memory=16384,           # 16 GiB — plenty of headroom for ffmpeg buffers
@@ -307,7 +307,7 @@ class VideoGenerator:
     cpu=0.5,
     memory=2048,
     timeout=25 * 60,
-    scaledown_window=600,
+    scaledown_window=120,
 )
 @modal.wsgi_app()
 def flask_app():
