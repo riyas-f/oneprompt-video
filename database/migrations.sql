@@ -1,0 +1,44 @@
+CREATE TABLE IF NOT EXISTS users (
+    discord_id BIGINT PRIMARY KEY,
+    discord_username TEXT NOT NULL,
+    subscription_status TEXT NOT NULL DEFAULT 'free',
+    suby_customer_id TEXT,
+    suby_subscription_id TEXT,
+    subscribed_at TIMESTAMP,
+    cancelled_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS modal_credentials (
+    discord_id BIGINT PRIMARY KEY REFERENCES users(discord_id) ON DELETE CASCADE,
+    token_id_encrypted TEXT NOT NULL,
+    token_secret_encrypted TEXT NOT NULL,
+    modal_app_url TEXT,
+    deployed_at TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS video_jobs (
+    id SERIAL PRIMARY KEY,
+    discord_id BIGINT NOT NULL REFERENCES users(discord_id) ON DELETE CASCADE,
+    prompt TEXT NOT NULL,
+    extended_prompt TEXT,
+    status TEXT NOT NULL DEFAULT 'processing',
+    video_url TEXT,
+    error_message TEXT,
+    api_job_id TEXT,
+    started_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_video_jobs_user_status
+    ON video_jobs(discord_id, status);
+
+CREATE TABLE IF NOT EXISTS pending_checkouts (
+    payment_id  TEXT PRIMARY KEY,
+    discord_id  BIGINT NOT NULL REFERENCES users(discord_id) ON DELETE CASCADE,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_checkouts_user
+    ON pending_checkouts(discord_id);
