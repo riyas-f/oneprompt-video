@@ -10,6 +10,7 @@ from discord.ext import commands
 from database import models as db
 from services import embeds
 from services.api_client import request_video
+from styles.presets import get_style_object
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +52,9 @@ class CreateForm(discord.ui.Modal, title="Generate a video"):
 
         job_id = await db.create_job(interaction.user.id, topic, extra or None)
 
+        prefs = await db.get_user_preferences(interaction.user.id)
+        style_obj = get_style_object(prefs.get("style_preset_key"), prefs.get("style_custom"))
+
         try:
             resp = await request_video(
                 content=topic,
@@ -58,6 +62,9 @@ class CreateForm(discord.ui.Modal, title="Generate a video"):
                 extra_context=extra,
                 discord_id=interaction.user.id,
                 job_id=job_id,
+                style=style_obj,
+                style_key=prefs.get("style_preset_key"),
+                voice=prefs.get("voice") or "af_heart",
             )
             api_job_id = resp.get("api_job_id")
             if api_job_id:

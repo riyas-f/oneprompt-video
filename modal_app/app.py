@@ -80,7 +80,7 @@ with image.imports():
     image=image,
     gpu="L40S",
     volumes=volumes,
-    scaledown_window=120,   # 2 min warm — bursts stay warm, idle tail is cheap
+    scaledown_window=30,    # 30s warm — single-job guard means no back-to-back bursts
     timeout=20 * 60,
     cpu=4.0,                # for parallel ffmpeg encodes + TTS thread
     memory=16384,           # 16 GiB — plenty of headroom for ffmpeg buffers

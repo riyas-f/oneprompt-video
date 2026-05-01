@@ -42,3 +42,11 @@ CREATE TABLE IF NOT EXISTS pending_checkouts (
 
 CREATE INDEX IF NOT EXISTS idx_pending_checkouts_user
     ON pending_checkouts(discord_id);
+
+CREATE TABLE IF NOT EXISTS user_preferences (
+    discord_id        BIGINT PRIMARY KEY REFERENCES users(discord_id) ON DELETE CASCADE,
+    style_preset_key  TEXT,
+    style_custom      JSONB,
+    voice             TEXT NOT NULL DEFAULT 'af_heart',
+    updated_at        TIMESTAMP NOT NULL DEFAULT NOW()
+);

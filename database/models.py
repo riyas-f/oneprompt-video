@@ -228,6 +228,87 @@ async def count_videos(discord_id: int) -> int:
         return int(row["n"])
 
 
+# ─── user preferences (style + voice) ────────────────────────────────────────
+DEFAULT_STYLE_PRESET = "whiteboard"
+DEFAULT_VOICE = "af_heart"
+
+
+async def get_user_preferences(discord_id: int) -> dict:
+    """Returns prefs row or sensible defaults if the user never set anything.
+    `style_custom` is always a dict-or-None (asyncpg returns JSONB as str)."""
+    import json
+    async with pool().acquire() as c:
+        row = await c.fetchrow(
+            "SELECT * FROM user_preferences WHERE discord_id = $1",
+            discord_id,
+        )
+    if row:
+        d = dict(row)
+        sc = d.get("style_custom")
+        if isinstance(sc, str):
+            try:
+                d["style_custom"] = json.loads(sc)
+            except json.JSONDecodeError:
+                d["style_custom"] = None
+        return d
+    return {
+        "discord_id": discord_id,
+        "style_preset_key": DEFAULT_STYLE_PRESET,
+        "style_custom": None,
+        "voice": DEFAULT_VOICE,
+        "updated_at": None,
+    }
+
+
+async def set_style_preset(discord_id: int, preset_key: str) -> None:
+    async with pool().acquire() as c:
+        await c.execute(
+            """
+            INSERT INTO user_preferences (discord_id, style_preset_key, style_custom, voice, updated_at)
+            VALUES ($1, $2, NULL, COALESCE(
+                (SELECT voice FROM user_preferences WHERE discord_id = $1), 'af_heart'
+            ), NOW())
+            ON CONFLICT (discord_id) DO UPDATE
+              SET style_preset_key = EXCLUDED.style_preset_key,
+                  style_custom = NULL,
+                  updated_at = NOW()
+            """,
+            discord_id, preset_key,
+        )
+
+
+async def set_style_custom(discord_id: int, custom: dict) -> None:
+    import json
+    async with pool().acquire() as c:
+        await c.execute(
+            """
+            INSERT INTO user_preferences (discord_id, style_preset_key, style_custom, voice, updated_at)
+            VALUES ($1, NULL, $2::jsonb, COALESCE(
+                (SELECT voice FROM user_preferences WHERE discord_id = $1), 'af_heart'
+            ), NOW())
+            ON CONFLICT (discord_id) DO UPDATE
+              SET style_preset_key = NULL,
+                  style_custom = EXCLUDED.style_custom,
+                  updated_at = NOW()
+            """,
+            discord_id, json.dumps(custom),
+        )
+
+
+async def set_voice(discord_id: int, voice: str) -> None:
+    async with pool().acquire() as c:
+        await c.execute(
+            """
+            INSERT INTO user_preferences (discord_id, voice, style_preset_key, updated_at)
+            VALUES ($1, $2, 'whiteboard', NOW())
+            ON CONFLICT (discord_id) DO UPDATE
+              SET voice = EXCLUDED.voice,
+                  updated_at = NOW()
+            """,
+            discord_id, voice,
+        )
+
+
 async def current_processing_job(discord_id: int) -> Optional[dict]:
     async with pool().acquire() as c:
         row = await c.fetchrow(

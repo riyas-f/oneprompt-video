@@ -13,6 +13,9 @@ async def request_video(
     extra_context: str,
     discord_id: int,
     job_id: int,
+    style: dict,
+    style_key: str | None,
+    voice: str,
 ) -> dict:
     """Fire-and-forget: API server should respond <2s with `{message, api_job_id}`."""
     payload = {
@@ -23,6 +26,9 @@ async def request_video(
         "job_id": job_id,
         "callback_url": f"{cfg.bot_public_url.rstrip('/')}/webhooks/video-ready",
         "callback_secret": cfg.video_api_callback_secret,
+        "style": style,
+        "style_key": style_key,   # 'whiteboard' | 'cinematic' | ... | None for custom
+        "voice": voice,
     }
     async with httpx.AsyncClient(timeout=15.0) as client:
         r = await client.post(cfg.video_api_url, json=payload)

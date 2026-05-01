@@ -10,8 +10,7 @@ from discord.ext import commands
 from config import cfg
 from database import models as db
 from services import embeds
-from services.encryption import decrypt
-from services.modal_billing import fetch_balance
+from styles.presets import get_style_label, get_voice_label
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +59,7 @@ class SupportCog(commands.Cog):
         creds = await db.get_modal_credentials(interaction.user.id)
         count = await db.count_videos(interaction.user.id) if user else 0
         current = await db.current_processing_job(interaction.user.id) if user else None
+        prefs = await db.get_user_preferences(interaction.user.id) if user else None
 
         sub = (user or {}).get("subscription_status", "free")
         sub_since = (user or {}).get("subscribed_at")
@@ -75,10 +75,19 @@ class SupportCog(commands.Cog):
 
         job_line = "**Current job:** " + ("⏳ Processing" if current else "None")
 
-        e = embeds.info(
-            "Your status",
-            f"{sub_line}\n{modal_line}\n**Videos generated:** {count}\n{job_line}",
+        if prefs:
+            style_line = f"**Style:** {get_style_label(prefs.get('style_preset_key'), prefs.get('style_custom'))}"
+            voice_line = f"**Voice:** {get_voice_label(prefs.get('voice'))}"
+        else:
+            style_line = ""
+            voice_line = ""
+
+        body = "\n".join(
+            line for line in [sub_line, modal_line, style_line, voice_line,
+                              f"**Videos generated:** {count}", job_line]
+            if line
         )
+        e = embeds.info("Your status", body)
         await interaction.response.send_message(embed=e, ephemeral=True)
 
     @app_commands.command(name="balance", description="Your Modal account balance & usage")
@@ -91,31 +100,19 @@ class SupportCog(commands.Cog):
             )
             return
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        try:
-            tid = decrypt(creds["token_id_encrypted"])
-            tsec = decrypt(creds["token_secret_encrypted"])
-            info = await fetch_balance(tid, tsec)
-        except Exception as ex:
-            await interaction.followup.send(
-                embed=embeds.error(
-                    "Could not fetch balance",
-                    f"Modal API error: `{str(ex)[:200]}`",
-                ),
-                ephemeral=True,
-            )
-            return
-
-        balance = info.get("balance_usd")
-        usage = info.get("mtd_usage_usd")
-        ws = info.get("workspace") or "—"
+        # Modal doesn't expose a public balance API. Deep-link to the dashboard
+        # — always up-to-date, no auth dance, shows the full picture (balance,
+        # auto-recharge settings, invoices, usage breakdown by app).
         body = (
-            f"**Workspace:** {ws}\n"
-            f"**Balance:** {f'${balance:.2f}' if isinstance(balance, (int, float)) else 'unknown'}\n"
-            f"**Month-to-date usage:** {f'${usage:.2f}' if isinstance(usage, (int, float)) else 'unknown'}\n\n"
-            f"Top up at https://modal.com/settings/billing"
+            "Modal doesn't expose balance over their API, so I can't show it here directly.\n\n"
+            "**[→ Open your Modal billing dashboard](https://modal.com/settings/billing)**\n\n"
+            "There you'll see your current balance, month-to-date usage, "
+            "and can top up your account."
         )
-        await interaction.followup.send(embed=embeds.info("Modal account", body), ephemeral=True)
+        await interaction.response.send_message(
+            embed=embeds.info("Modal billing", body),
+            ephemeral=True,
+        )
 
     @app_commands.command(name="videos", description="Your last 5 generated videos")
     async def videos(self, interaction: discord.Interaction):
