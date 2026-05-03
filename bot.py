@@ -56,7 +56,7 @@ bot.tree.interaction_check = _dm_only  # type: ignore[assignment]
 
 
 async def _load_cogs():
-    for ext in ("cogs.onboarding", "cogs.setup", "cogs.video", "cogs.support", "cogs.preferences"):
+    for ext in ("cogs.onboarding", "cogs.setup", "cogs.video", "cogs.support", "cogs.preferences", "cogs.install_listener"):
         await bot.load_extension(ext)
         log.info("Loaded extension %s", ext)
 

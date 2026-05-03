@@ -70,3 +70,9 @@ Header: `X-Signature: sha256=<HMAC-SHA256(callback_secret, raw_body)>`.
 - **Single-job guard** — `/create` rejects while another job for the user is `processing`.
 - **Idempotent webhook** — `/webhooks/video-ready` is safe to retry; second hit becomes a no-op.
 - **`ENCRYPTION_KEY` is critical** — losing it bricks all stored Modal credentials.
+- **Auto-DM on install** — `cogs/install_listener.py` hooks the gateway
+  `APPLICATION_AUTHORIZED` event (integration_type=1, User App install) and
+  DMs the welcoming `/start` message to the new user. Returning users get a
+  "welcome back" variant. Users with DMs disabled are logged and skipped.
+  discord.py 2.3 doesn't expose this event natively, so we install a parser
+  on `bot._connection.parsers["APPLICATION_AUTHORIZED"]`.

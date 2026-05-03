@@ -11,21 +11,35 @@ from services import embeds
 from services import suby
 
 
+def build_start_message(username: str | None = None, *, returning: bool = False) -> discord.Embed:
+    """Welcome embed shown by /start and on APPLICATION_AUTHORIZED install."""
+    if returning:
+        title = f"Welcome back{f', {username}' if username else ''}"
+        intro = "Good to see you again — OnePrompt is ready when you are."
+    else:
+        title = f"Welcome to OnePrompt{f', {username}' if username else ''}"
+        intro = "Generate faceless AI videos from a single prompt — straight from Discord."
+    return embeds.welcome(
+        title,
+        (
+            f"{intro}\n\n"
+            f"**${cfg.price_usd}/month, unlimited videos.**\n\n"
+            f"**Next step:** `/subscribe` to start your subscription.\n"
+            f"Then `/setmodal` to connect your Modal account, and `/create` to make a video.\n"
+            f"Run `/help` to see every command."
+        ),
+    )
+
+
 class Onboarding(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
     @app_commands.command(name="start", description="Get started with OnePrompt")
     async def start(self, interaction: discord.Interaction):
+        existing = await db.get_user(interaction.user.id)
         await db.upsert_user(interaction.user.id, interaction.user.name)
-        e = embeds.welcome(
-            "Welcome to OnePrompt",
-            (
-                f"Generate faceless AI videos from a single prompt — straight from Discord.\n\n"
-                f"**${cfg.price_usd}/month, unlimited videos.**\n\n"
-                f"**Next step:** `/subscribe` to start your subscription."
-            ),
-        )
+        e = build_start_message(interaction.user.name, returning=existing is not None)
         await interaction.response.send_message(embed=e, ephemeral=True)
 
     @app_commands.command(name="subscribe", description="Subscribe to OnePrompt Pro")
