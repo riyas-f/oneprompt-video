@@ -18,6 +18,7 @@ def _req(name: str) -> str:
 @dataclass(frozen=True)
 class Config:
     discord_token: str
+    discord_public_key: str
     database_url: str
 
     suby_api_key: str
@@ -49,6 +50,7 @@ class Config:
 def load() -> Config:
     return Config(
         discord_token=_req("DISCORD_BOT_TOKEN"),
+        discord_public_key=os.getenv("DISCORD_PUBLIC_KEY", ""),
         database_url=_req("DATABASE_URL"),
         suby_api_key=_req("SUBY_API_KEY"),
         suby_webhook_secret=_req("SUBY_WEBHOOK_SECRET"),

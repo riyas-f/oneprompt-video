@@ -70,9 +70,20 @@ Header: `X-Signature: sha256=<HMAC-SHA256(callback_secret, raw_body)>`.
 - **Single-job guard** — `/create` rejects while another job for the user is `processing`.
 - **Idempotent webhook** — `/webhooks/video-ready` is safe to retry; second hit becomes a no-op.
 - **`ENCRYPTION_KEY` is critical** — losing it bricks all stored Modal credentials.
-- **Auto-DM on install** — `cogs/install_listener.py` hooks the gateway
-  `APPLICATION_AUTHORIZED` event (integration_type=1, User App install) and
-  DMs the welcoming `/start` message to the new user. Returning users get a
-  "welcome back" variant. Users with DMs disabled are logged and skipped.
-  discord.py 2.3 doesn't expose this event natively, so we install a parser
-  on `bot._connection.parsers["APPLICATION_AUTHORIZED"]`.
+- **Auto-DM on install** — when a user installs OnePrompt as a User App,
+  Discord sends `APPLICATION_AUTHORIZED` and we DM the welcome message
+  (same content as `/start`; "welcome back" variant for returning users).
+  Two delivery paths feed the same handler (`cogs/install_listener.handle_install`):
+  1. **Gateway parser hook** — `cogs/install_listener.py` patches
+     `bot._connection.parsers["APPLICATION_AUTHORIZED"]` because discord.py 2.3
+     doesn't expose the event natively.
+  2. **HTTP webhook** — `POST /webhooks/discord` (in `webhooks/server.py`)
+     handles Discord's "Webhook Events" delivery. Configure in the Developer
+     Portal → your app → **Webhook Events** → set URL to
+     `https://bot.oneprompt.bot/webhooks/discord` and subscribe to
+     `APPLICATION_AUTHORIZED`. Requires `DISCORD_PUBLIC_KEY` in `.env`
+     (Developer Portal → General Information). The endpoint verifies the
+     Ed25519 signature, acks the PING handshake, and dispatches events.
+
+  The HTTP path is the reliable one — gateway delivery of APPLICATION_AUTHORIZED
+  is inconsistent for User Apps. Users with DMs disabled are logged and skipped.
