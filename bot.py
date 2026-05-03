@@ -21,6 +21,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("oneprompt")
 
+# TEMP: see every gateway event so we can confirm APPLICATION_AUTHORIZED arrives.
+logging.getLogger("discord.gateway").setLevel(logging.DEBUG)
+
 
 intents = discord.Intents.default()
 intents.dm_messages = True
