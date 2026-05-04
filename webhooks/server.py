@@ -7,7 +7,10 @@ import logging
 
 import discord
 from aiohttp import web
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from cogs.install_listener import handle_install
 from config import cfg
 from database import models as db
 from services import embeds
@@ -201,9 +204,63 @@ def build_app(bot: discord.Client) -> web.Application:
 
         return web.json_response({"ok": True})
 
+    async def discord_webhook(request: web.Request) -> web.Response:
+        """Discord application webhook events (e.g. APPLICATION_AUTHORIZED).
+
+        Setup: Discord Developer Portal → Your App → "Webhook Events" →
+        "Use Webhook Events Endpoint URL" → set to https://bot.oneprompt.bot/webhooks/discord
+        and subscribe to APPLICATION_AUTHORIZED. The portal sends a PING (type=0)
+        to validate the URL, which we ack with 204.
+
+        Docs: https://discord.com/developers/docs/events/webhook-events
+        """
+        if not cfg.discord_public_key:
+            log.error("Discord webhook hit but DISCORD_PUBLIC_KEY is unset")
+            return web.json_response({"error": "not configured"}, status=503)
+
+        signature = request.headers.get("X-Signature-Ed25519")
+        timestamp = request.headers.get("X-Signature-Timestamp")
+        raw = await request.read()
+
+        if not signature or not timestamp:
+            return web.json_response({"error": "missing signature"}, status=401)
+
+        try:
+            verify_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(cfg.discord_public_key))
+            verify_key.verify(bytes.fromhex(signature), timestamp.encode() + raw)
+        except (InvalidSignature, ValueError):
+            return web.json_response({"error": "bad signature"}, status=401)
+
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "bad json"}, status=400)
+
+        ptype = payload.get("type")
+
+        # PING — URL validation handshake.
+        if ptype == 0:
+            log.info("Discord webhook PING received — responding 204")
+            return web.Response(status=204)
+
+        # Event.
+        if ptype == 1:
+            event = payload.get("event") or {}
+            etype = event.get("type")
+            data = event.get("data") or {}
+            if etype == "APPLICATION_AUTHORIZED":
+                await handle_install(bot, data)
+            else:
+                log.info("Ignoring Discord webhook event type=%s", etype)
+            return web.Response(status=204)
+
+        log.info("Unknown Discord webhook payload type=%s", ptype)
+        return web.Response(status=204)
+
     app.router.add_get("/health", health)
     app.router.add_post("/webhooks/suby", suby_webhook)
     app.router.add_post("/webhooks/video-ready", video_ready)
+    app.router.add_post("/webhooks/discord", discord_webhook)
     return app
 
 
