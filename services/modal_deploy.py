@@ -5,6 +5,7 @@ import asyncio
 import os
 import re
 import subprocess
+import sys
 
 from config import cfg
 
@@ -24,7 +25,7 @@ def _deploy_blocking(token_id: str, token_secret: str) -> str:
     # Re-deploys for the same user reuse the cached image and finish in ~30s.
     # 10 minutes covers both with headroom.
     result = subprocess.run(
-        ["modal", "deploy", cfg.modal_app_path],
+        [sys.executable, "-m", "modal", "deploy", cfg.modal_app_path],
         env=env,
         capture_output=True,
         text=True,
