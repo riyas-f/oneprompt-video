@@ -5,21 +5,23 @@ Discord-native storefront for an AI faceless-video SaaS. Users `/subscribe`, `/s
 ## Quick start (local)
 
 ```bash
-# 1. install Modal CLI on host (needed by /setmodal subprocess)
-pip install modal
-
-# 2. python deps
+# 1. python deps (includes the modal CLI; /setmodal invokes it as
+#    `python -m modal`, so it just needs to be in the same venv as the bot)
 pip install -r requirements.txt
 
-# 3. copy + fill envs
+# 2. copy + fill envs
 cp .env.example .env
 # generate ENCRYPTION_KEY:
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
-# 4. start Postgres + bot
+# 3. start Postgres + bot
 docker compose up -d db
 python bot.py
 ```
+
+When running under pm2/systemd, launch the bot with the same venv's
+interpreter (e.g. `pm2 start bot.py --interpreter /path/to/.venv/bin/python`)
+so `python -m modal` resolves to the installed package.
 
 ## Architecture
 
