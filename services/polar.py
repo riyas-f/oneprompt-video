@@ -71,11 +71,49 @@ async def create_checkout_session(discord_id: int, discord_username: str) -> tup
     return url, checkout_id
 
 
-def _decode_secret(secret: str) -> bytes:
-    """Strip the `polar_whs_`/`whsec_` prefix and base64-decode the secret."""
-    body = secret.split("_", 2)[-1] if "_" in secret else secret
-    body += "=" * (-len(body) % 4)  # restore base64 padding
-    return base64.b64decode(body)
+def _candidate_secrets(secret: str) -> list[bytes]:
+    """Return every plausible interpretation of Polar's webhook secret.
+
+    Polar prefixes secrets with `polar_whs_`, but their docs are vague about
+    whether the suffix is base64-encoded (per Standard Webhooks spec) or a
+    raw token. We try all four interpretations and let the HMAC comparison
+    pick the right one. Once a working interpretation is identified, this
+    can be simplified.
+    """
+    out: list[bytes] = []
+    suffix = secret.split("_", 2)[-1] if "_" in secret else secret
+    padded = suffix + "=" * (-len(suffix) % 4)
+
+    # Standard Webhooks: strip prefix, base64-decode suffix.
+    try:
+        out.append(base64.b64decode(padded))
+    except Exception:
+        pass
+    # URL-safe base64 variant.
+    try:
+        out.append(base64.urlsafe_b64decode(padded))
+    except Exception:
+        pass
+    # Suffix used as raw UTF-8 bytes (no decoding).
+    out.append(suffix.encode())
+    # Entire secret string (with prefix) used as raw bytes.
+    out.append(secret.encode())
+
+    # Dedupe while preserving order.
+    seen: set[bytes] = set()
+    deduped: list[bytes] = []
+    for c in out:
+        if c not in seen:
+            seen.add(c)
+            deduped.append(c)
+    return deduped
+
+
+def _expected_signatures(secret_bytes: bytes, msg_id: str, msg_timestamp: str, raw_body: bytes) -> str:
+    signed = f"{msg_id}.{msg_timestamp}.".encode() + raw_body
+    return base64.b64encode(
+        hmac.new(secret_bytes, signed, hashlib.sha256).digest()
+    ).decode()
 
 
 def verify_webhook_signature(
@@ -99,18 +137,21 @@ def verify_webhook_signature(
     if abs(time.time() - ts) > WEBHOOK_TOLERANCE_SECONDS:
         return False
 
-    try:
-        secret_bytes = _decode_secret(cfg.polar_webhook_secret)
-    except Exception:
-        return False
-
-    signed = f"{msg_id}.{msg_timestamp}.".encode() + raw_body
-    expected = base64.b64encode(
-        hmac.new(secret_bytes, signed, hashlib.sha256).digest()
-    ).decode()
-
+    received_sigs: list[str] = []
     for part in signature_header.split(" "):
         version, _, sig = part.partition(",")
-        if version == "v1" and hmac.compare_digest(expected, sig):
-            return True
+        if version == "v1" and sig:
+            received_sigs.append(sig)
+    if not received_sigs:
+        return False
+
+    import logging
+    log = logging.getLogger(__name__)
+    for idx, secret_bytes in enumerate(_candidate_secrets(cfg.polar_webhook_secret)):
+        expected = _expected_signatures(secret_bytes, msg_id, msg_timestamp, raw_body)
+        for sig in received_sigs:
+            if hmac.compare_digest(expected, sig):
+                log.info("Polar webhook signature verified using candidate #%d", idx)
+                return True
     return False
+
