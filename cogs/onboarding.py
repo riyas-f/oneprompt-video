@@ -8,7 +8,7 @@ from discord.ext import commands
 from config import cfg
 from database import models as db
 from services import embeds
-from services import suby
+from services import polar
 
 
 def build_start_message(username: str | None = None, *, returning: bool = False) -> discord.Embed:
@@ -23,8 +23,8 @@ def build_start_message(username: str | None = None, *, returning: bool = False)
         title,
         (
             f"{intro}\n\n"
-            f"**${cfg.price_usd}/month, unlimited videos.**\n\n"
-            f"**Next step:** `/subscribe` to start your subscription.\n"
+            f"**${cfg.price_usd}/month, unlimited videos. {cfg.polar_trial_days}-day free trial — no charge today.**\n\n"
+            f"**Next step:** `/subscribe` to start your free trial.\n"
             f"Then `/setmodal` to connect your Modal account, and `/create` to make a video.\n"
             f"Run `/help` to see every command."
         ),
@@ -59,10 +59,10 @@ class Onboarding(commands.Cog):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            url, payment_id = await suby.create_checkout_session(
+            url, checkout_id = await polar.create_checkout_session(
                 interaction.user.id, interaction.user.name
             )
-            await db.record_pending_checkout(payment_id, interaction.user.id)
+            await db.record_pending_checkout(checkout_id, interaction.user.id)
         except Exception as ex:
             await interaction.followup.send(
                 embed=embeds.error("Could not start checkout", f"Please try again or use `/support`.\n`{ex}`"),
@@ -71,11 +71,12 @@ class Onboarding(commands.Cog):
             return
 
         e = embeds.info(
-            "Subscribe — $29/month",
-            "Click below to subscribe. Once payment completes you'll get a confirmation here automatically.",
+            f"Start your {cfg.polar_trial_days}-day free trial",
+            f"Then **${cfg.price_usd}/month**. Cancel anytime during the trial — no charge.\n\n"
+            "Click below to add a card. You'll get a confirmation here as soon as it's done.",
         )
         view = discord.ui.View()
-        view.add_item(discord.ui.Button(label="Subscribe", url=url, style=discord.ButtonStyle.link))
+        view.add_item(discord.ui.Button(label=f"Start free trial", url=url, style=discord.ButtonStyle.link))
         await interaction.followup.send(embed=e, view=view, ephemeral=True)
 
     @app_commands.command(name="help", description="List all OnePrompt commands")
@@ -84,7 +85,7 @@ class Onboarding(commands.Cog):
             "OnePrompt — Commands",
             (
                 "`/start` — quick intro\n"
-                "`/subscribe` — start your $29/month subscription\n"
+                f"`/subscribe` — start your {cfg.polar_trial_days}-day free trial (then ${cfg.price_usd}/mo)\n"
                 "`/setmodal` — connect your Modal.com account\n"
                 "`/style` — pick your video art style (8 presets + custom)\n"
                 "`/voice` — pick your narrator voice\n"

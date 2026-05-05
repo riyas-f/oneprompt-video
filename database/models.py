@@ -104,7 +104,7 @@ async def get_modal_credentials(discord_id: int) -> Optional[dict]:
         return dict(row) if row else None
 
 
-# ─── pending checkouts (Suby paymentId → discord_id) ─────────────────────────
+# ─── pending checkouts (Polar checkout id → discord_id) ──────────────────────
 async def record_pending_checkout(payment_id: str, discord_id: int) -> None:
     async with pool().acquire() as c:
         await c.execute(

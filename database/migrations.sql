@@ -2,6 +2,8 @@ CREATE TABLE IF NOT EXISTS users (
     discord_id BIGINT PRIMARY KEY,
     discord_username TEXT NOT NULL,
     subscription_status TEXT NOT NULL DEFAULT 'free',
+    -- Polar customer + subscription IDs. Column names retained from the legacy
+    -- Suby integration to avoid an ALTER TABLE on existing databases.
     suby_customer_id TEXT,
     suby_subscription_id TEXT,
     subscribed_at TIMESTAMP,

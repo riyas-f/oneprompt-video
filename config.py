@@ -21,14 +21,12 @@ class Config:
     discord_public_key: str
     database_url: str
 
-    suby_api_key: str
-    suby_webhook_secret: str
-    suby_product_id: str
-    suby_api_base: str
-    suby_success_url: str
-    suby_cancel_url: str
-    suby_price_cents: int
-    suby_currency: str
+    polar_access_token: str
+    polar_webhook_secret: str
+    polar_product_id: str
+    polar_api_base: str
+    polar_success_url: str
+    polar_trial_days: int
 
     encryption_key: str
 
@@ -52,14 +50,12 @@ def load() -> Config:
         discord_token=_req("DISCORD_BOT_TOKEN"),
         discord_public_key=os.getenv("DISCORD_PUBLIC_KEY", ""),
         database_url=_req("DATABASE_URL"),
-        suby_api_key=_req("SUBY_API_KEY"),
-        suby_webhook_secret=_req("SUBY_WEBHOOK_SECRET"),
-        suby_product_id=_req("SUBY_PRODUCT_ID"),
-        suby_api_base=os.getenv("SUBY_API_BASE", "https://api.suby.fi"),
-        suby_success_url=os.getenv("SUBY_SUCCESS_URL", ""),
-        suby_cancel_url=os.getenv("SUBY_CANCEL_URL", ""),
-        suby_price_cents=int(os.getenv("SUBY_PRICE_CENTS", "2900")),
-        suby_currency=os.getenv("SUBY_CURRENCY", "USD"),
+        polar_access_token=_req("POLAR_ACCESS_TOKEN"),
+        polar_webhook_secret=_req("POLAR_WEBHOOK_SECRET"),
+        polar_product_id=_req("POLAR_PRODUCT_ID"),
+        polar_api_base=os.getenv("POLAR_API_BASE", "https://api.polar.sh"),
+        polar_success_url=os.getenv("POLAR_SUCCESS_URL", ""),
+        polar_trial_days=int(os.getenv("POLAR_TRIAL_DAYS", "7")),
         encryption_key=_req("ENCRYPTION_KEY"),
         modal_app_path=os.getenv("MODAL_APP_PATH", "./modal_app/app.py"),
         modal_graphql_url=os.getenv("MODAL_GRAPHQL_URL", "https://api.modal.com/graphql"),

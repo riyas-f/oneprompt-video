@@ -1,4 +1,4 @@
-"""aiohttp server for Suby + API-server callbacks. Runs in the bot's event loop."""
+"""aiohttp server for Polar + API-server + Discord callbacks. Runs in the bot's event loop."""
 from __future__ import annotations
 
 import hmac
@@ -14,7 +14,7 @@ from cogs.install_listener import handle_install
 from config import cfg
 from database import models as db
 from services import embeds
-from services.suby import verify_webhook_signature, compute_signature
+from services.polar import verify_webhook_signature as verify_polar_signature
 
 log = logging.getLogger(__name__)
 
@@ -37,15 +37,29 @@ def build_app(bot: discord.Client) -> web.Application:
     async def health(_: web.Request) -> web.Response:
         return web.json_response({"status": "ok"})
 
-    async def suby_webhook(request: web.Request) -> web.Response:
-        raw = await request.read()
-        sig = request.headers.get("X-Webhook-Signature") or request.headers.get("Suby-Signature")
-        ts = request.headers.get("X-Webhook-Timestamp")
+    async def polar_webhook(request: web.Request) -> web.Response:
+        """Polar.sh subscription webhook. Standard Webhooks signed.
 
-        if not verify_webhook_signature(raw, sig, ts):
+        Events handled:
+          subscription.created  → mark Pro (covers trialing & active)
+          subscription.updated  → re-evaluate status
+          subscription.canceled → mark cancelled
+          order.refunded        → mark cancelled
+        Other events are logged and ignored.
+
+        Discord identity is resolved from `data.metadata.discord_id` (set in
+        services/polar.create_checkout_session). Falls back to the
+        pending_checkouts table via the checkout id when metadata is missing.
+        """
+        raw = await request.read()
+        msg_id = request.headers.get("webhook-id")
+        msg_ts = request.headers.get("webhook-timestamp")
+        msg_sig = request.headers.get("webhook-signature")
+
+        if not verify_polar_signature(raw, msg_id, msg_ts, msg_sig):
             log.warning(
-                "Suby webhook signature mismatch. expected=%s received=%s ts=%s body[:200]=%r",
-                compute_signature(raw, ts), sig, ts, raw[:200],
+                "Polar webhook signature mismatch. id=%s ts=%s sig=%s body[:200]=%r",
+                msg_id, msg_ts, msg_sig, raw[:200],
             )
             return web.json_response({"error": "bad signature"}, status=401)
 
@@ -54,85 +68,74 @@ def build_app(bot: discord.Client) -> web.Application:
         except Exception:
             return web.json_response({"error": "bad json"}, status=400)
 
-        etype = (
-            request.headers.get("X-Webhook-Event")
-            or event.get("type")
-            or ""
-        ).upper()
-
-        # One-shot diagnostic — remove once we've confirmed Suby's payload shape.
-        log.info("Suby webhook FULL BODY (event=%s): %s", etype, raw.decode("utf-8", "replace")[:2000])
-
+        etype = event.get("type") or ""
         data = event.get("data") or {}
-        payment = data.get("payment") or data
-        subscription = data.get("subscription") or {}
-        context = data.get("context") or {}
-        meta = (
-            context.get("metadata")
-            or payment.get("metadata")
-            or data.get("metadata")
-            or {}
-        )
-        payment_id = payment.get("id") or data.get("paymentId")
+        meta = data.get("metadata") or {}
 
-        # Primary lookup: paymentId we recorded at /subscribe time.
+        # Resolve Discord identity. Primary: metadata.discord_id we set at
+        # checkout. Fallback: external_customer_id (also set to discord_id).
         discord_id: int | None = None
-        if payment_id:
-            discord_id = await db.lookup_discord_id_by_payment(str(payment_id))
+        for candidate in (meta.get("discord_id"), data.get("external_customer_id")):
+            if candidate is None:
+                continue
+            try:
+                discord_id = int(candidate)
+                break
+            except (TypeError, ValueError):
+                continue
 
-        # Fallbacks for events that aren't tied to one of our paymentIds
-        # (e.g. dashboard test events, or future event types).
+        # Last resort: lookup by checkout id (when present on the payload).
         if discord_id is None:
-            ext = (
-                context.get("externalRef")
-                or payment.get("externalRef")
-                or data.get("externalRef")
-                or meta.get("discord_id")
-            )
-            if ext:
-                try:
-                    discord_id = int(ext)
-                except ValueError:
-                    discord_id = None
+            checkout_id = data.get("checkout_id") or data.get("checkout", {}).get("id")
+            if checkout_id:
+                discord_id = await db.lookup_discord_id_by_payment(str(checkout_id))
 
         if discord_id is None:
-            log.info(
-                "Suby %s ignored — no matching paymentId/externalRef (likely dashboard test)",
-                etype,
-            )
+            log.info("Polar %s ignored — no discord_id resolvable (likely dashboard test)", etype)
             return web.json_response({"ok": True})
 
-        if etype in ("PAYMENT_SUCCESS", "SUBSCRIPTION_ACTIVATED", "SUBSCRIPTION_RENEWED"):
-            customer_id = (
-                payment.get("customerId")
-                or (payment.get("customer") or {}).get("id")
-                or data.get("customerId")
-                or ""
-            )
-            sub_id = (
-                subscription.get("id")
-                or payment.get("subscriptionId")
-                or data.get("subscriptionId")
-                or payment.get("id")
-                or ""
-            )
-            user_row = await db.get_user(discord_id)
-            already_pro = bool(user_row and user_row["subscription_status"] == "pro")
-            await db.upsert_user(discord_id, meta.get("discord_username", "user"))
-            await db.mark_subscribed(discord_id, str(customer_id), str(sub_id))
-            if payment_id:
-                await db.delete_pending_checkout(str(payment_id))
-            if not already_pro:
-                await _dm(
-                    bot, discord_id,
-                    embeds.success(
-                        "You're subscribed to OnePrompt Pro",
-                        "**Next step:** run `/setmodal` to connect your Modal.com account, "
-                        "then `/create` to generate your first video.",
-                    ),
-                )
+        if etype in ("subscription.created", "subscription.updated"):
+            status = (data.get("status") or "").lower()
+            customer_id = str(data.get("customer_id") or (data.get("customer") or {}).get("id") or "")
+            sub_id = str(data.get("id") or "")
+            checkout_id = data.get("checkout_id") or (data.get("checkout") or {}).get("id")
 
-        elif etype in ("SUBSCRIPTION_CANCELLED", "SUBSCRIPTION_EXPIRED"):
+            if status in ("active", "trialing"):
+                user_row = await db.get_user(discord_id)
+                already_pro = bool(user_row and user_row["subscription_status"] == "pro")
+                username = meta.get("discord_username") or (user_row or {}).get("discord_username") or "user"
+                await db.upsert_user(discord_id, username)
+                await db.mark_subscribed(discord_id, customer_id, sub_id)
+                if checkout_id:
+                    await db.delete_pending_checkout(str(checkout_id))
+                if not already_pro:
+                    trialing = status == "trialing"
+                    title = (
+                        "Your free trial has started"
+                        if trialing else "You're subscribed to OnePrompt Pro"
+                    )
+                    body = (
+                        f"You have **{cfg.polar_trial_days} days** of full Pro access. "
+                        "**Next step:** run `/setmodal` to connect your Modal.com account, "
+                        "then `/create` to generate your first video."
+                        if trialing else
+                        "**Next step:** run `/setmodal` to connect your Modal.com account, "
+                        "then `/create` to generate your first video."
+                    )
+                    await _dm(bot, discord_id, embeds.success(title, body))
+            else:
+                # past_due, unpaid, canceled, incomplete, etc.
+                await db.mark_cancelled(discord_id)
+                if status == "past_due":
+                    await _dm(
+                        bot, discord_id,
+                        embeds.error(
+                            "Payment failed",
+                            "Your latest charge didn't go through. Please update your card or use `/subscribe`.",
+                        ),
+                    )
+
+        elif etype in ("subscription.canceled", "subscription.revoked"):
             await db.mark_cancelled(discord_id)
             await _dm(
                 bot, discord_id,
@@ -142,17 +145,18 @@ def build_app(bot: discord.Client) -> web.Application:
                 ),
             )
 
-        elif etype == "PAYMENT_FAILED":
+        elif etype == "order.refunded":
+            await db.mark_cancelled(discord_id)
             await _dm(
                 bot, discord_id,
-                embeds.error(
-                    "Payment failed",
-                    "Your latest charge didn't go through. Please update your card or try `/subscribe` again.",
+                embeds.info(
+                    "Refund processed",
+                    "Your payment was refunded and your subscription is no longer active.",
                 ),
             )
 
         else:
-            log.info("Ignoring Suby event: %s", etype)
+            log.info("Ignoring Polar event: %s", etype)
 
         return web.json_response({"ok": True})
 
@@ -258,7 +262,7 @@ def build_app(bot: discord.Client) -> web.Application:
         return web.Response(status=204)
 
     app.router.add_get("/health", health)
-    app.router.add_post("/webhooks/suby", suby_webhook)
+    app.router.add_post("/webhooks/polar", polar_webhook)
     app.router.add_post("/webhooks/video-ready", video_ready)
     app.router.add_post("/webhooks/discord", discord_webhook)
     return app
