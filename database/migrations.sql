@@ -8,8 +8,10 @@ CREATE TABLE IF NOT EXISTS users (
     suby_subscription_id TEXT,
     subscribed_at TIMESTAMP,
     cancelled_at TIMESTAMP,
+    free_attempts_used INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS free_attempts_used INT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS modal_credentials (
     discord_id BIGINT PRIMARY KEY REFERENCES users(discord_id) ON DELETE CASCADE,

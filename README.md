@@ -59,7 +59,7 @@ Header: `X-Signature: sha256=<HMAC-SHA256(callback_secret, raw_body)>`.
 | `/start` | Welcome + pricing |
 | `/subscribe` | Polar.sh checkout (7-day free trial) |
 | `/setmodal` | Form → encrypts tokens → deploys `modal_app/app.py` |
-| `/create` | Form → kicks off video generation |
+| `/create` | Form → kicks off video generation. First `FREE_GENERATIONS` runs use the bot owner's Modal (no `/setmodal` needed); after that requires `/subscribe` + `/setmodal`. |
 | `/status` | Subscription + Modal connection + current job |
 | `/balance` | Modal account balance + month-to-date usage |
 | `/videos` | Last 5 generated videos |
@@ -72,6 +72,13 @@ Header: `X-Signature: sha256=<HMAC-SHA256(callback_secret, raw_body)>`.
 - **Single-job guard** — `/create` rejects while another job for the user is `processing`.
 - **Idempotent webhook** — `/webhooks/video-ready` is safe to retry; second hit becomes a no-op.
 - **`ENCRYPTION_KEY` is critical** — losing it bricks all stored Modal credentials.
+- **Free-tier admin Modal** — `ADMIN_MODAL_URL` points at the bot owner's
+  shared deployment of `modal_app/app.py`. New users get
+  `FREE_GENERATIONS` (default 2) lifetime free runs against it before
+  the paywall. Counter is stored in `users.free_attempts_used` and
+  incremented only after a successful API dispatch (failed runs don't
+  burn a credit). To deploy the admin app: `cd modal_app && modal deploy app.py`,
+  then put the printed URL in `.env`.
 - **Auto-DM on install** — when a user installs OnePrompt as a User App,
   Discord sends `APPLICATION_AUTHORIZED` and we DM the welcome message
   (same content as `/start`; "welcome back" variant for returning users).

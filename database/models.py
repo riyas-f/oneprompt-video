@@ -27,6 +27,20 @@ async def get_user(discord_id: int) -> Optional[dict]:
         return dict(row) if row else None
 
 
+async def increment_free_attempt(discord_id: int) -> int:
+    """Atomically bump the free-tier counter; returns the new value."""
+    async with pool().acquire() as c:
+        row = await c.fetchrow(
+            """
+            UPDATE users SET free_attempts_used = free_attempts_used + 1
+            WHERE discord_id = $1
+            RETURNING free_attempts_used
+            """,
+            discord_id,
+        )
+        return int(row["free_attempts_used"]) if row else 0
+
+
 async def mark_subscribed(discord_id: int, customer_id: str, subscription_id: str) -> None:
     async with pool().acquire() as c:
         await c.execute(

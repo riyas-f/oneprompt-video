@@ -32,6 +32,8 @@ class Config:
 
     modal_app_path: str
     modal_graphql_url: str
+    admin_modal_url: str
+    free_generations: int
 
     video_api_url: str
     video_api_callback_secret: str
@@ -59,6 +61,8 @@ def load() -> Config:
         encryption_key=_req("ENCRYPTION_KEY"),
         modal_app_path=os.getenv("MODAL_APP_PATH", "./modal_app/app.py"),
         modal_graphql_url=os.getenv("MODAL_GRAPHQL_URL", "https://api.modal.com/graphql"),
+        admin_modal_url=_req("ADMIN_MODAL_URL"),
+        free_generations=int(os.getenv("FREE_GENERATIONS", "2")),
         video_api_url=_req("VIDEO_API_URL"),
         video_api_callback_secret=_req("VIDEO_API_CALLBACK_SECRET"),
         bot_public_url=_req("BOT_PUBLIC_URL"),
