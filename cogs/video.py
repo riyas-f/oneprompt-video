@@ -7,6 +7,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from config import cfg
 from database import models as db
 from services import embeds
 from services.api_client import request_video
@@ -30,9 +31,10 @@ class CreateForm(discord.ui.Modal, title="Generate a video"):
         max_length=1000,
     )
 
-    def __init__(self, modal_url: str):
+    def __init__(self, modal_url: str, *, is_free_run: bool = False):
         super().__init__()
         self._modal_url = modal_url
+        self._is_free_run = is_free_run
 
     async def on_submit(self, interaction: discord.Interaction):
         topic = str(self.topic.value).strip()
@@ -81,10 +83,20 @@ class CreateForm(discord.ui.Modal, title="Generate a video"):
             )
             return
 
+        # Only burn a free credit once dispatch has succeeded.
+        free_note = ""
+        if self._is_free_run:
+            used = await db.increment_free_attempt(interaction.user.id)
+            remaining = max(0, cfg.free_generations - used)
+            free_note = (
+                f"\n\n*Free preview {used}/{cfg.free_generations}. "
+                f"{remaining} left — `/subscribe` for unlimited.*"
+            )
+
         await interaction.response.send_message(
             embed=embeds.processing(
                 "🎬 Generating your video",
-                "I'll DM you when it's ready. This usually takes 5–10 minutes.",
+                "I'll DM you when it's ready. This usually takes 5–10 minutes." + free_note,
             ),
             ephemeral=True,
         )
@@ -96,23 +108,35 @@ class VideoCog(commands.Cog):
 
     @app_commands.command(name="create", description="Generate a new video")
     async def create(self, interaction: discord.Interaction):
+        # Make sure the user row exists so increment_free_attempt has a target.
+        await db.upsert_user(interaction.user.id, interaction.user.name)
         user = await db.get_user(interaction.user.id)
-        if not user or user["subscription_status"] != "pro":
-            await interaction.response.send_message(
-                embed=embeds.error(
-                    "Subscription required",
-                    "You need an active subscription. Use `/subscribe` to get started.",
-                ),
-                ephemeral=True,
-            )
-            return
+        is_pro = bool(user and user["subscription_status"] == "pro")
+        free_used = int((user or {}).get("free_attempts_used", 0) or 0)
 
-        creds = await db.get_modal_credentials(interaction.user.id)
-        if not creds or not creds.get("modal_app_url"):
+        if is_pro:
+            creds = await db.get_modal_credentials(interaction.user.id)
+            if not creds or not creds.get("modal_app_url"):
+                await interaction.response.send_message(
+                    embed=embeds.error(
+                        "Modal not connected",
+                        "Please set up your Modal account first using `/setmodal`.",
+                    ),
+                    ephemeral=True,
+                )
+                return
+            modal_url = creds["modal_app_url"]
+            is_free_run = False
+        elif free_used < cfg.free_generations:
+            modal_url = cfg.admin_modal_url
+            is_free_run = True
+        else:
             await interaction.response.send_message(
                 embed=embeds.error(
-                    "Modal not connected",
-                    "Please set up your Modal account first using `/setmodal`.",
+                    "Free previews used",
+                    f"You've used your {cfg.free_generations} free videos. "
+                    f"Run **`/subscribe`** to keep generating — ${cfg.price_usd}/month "
+                    f"with a {cfg.polar_trial_days}-day free trial.",
                 ),
                 ephemeral=True,
             )
@@ -128,7 +152,9 @@ class VideoCog(commands.Cog):
             )
             return
 
-        await interaction.response.send_modal(CreateForm(modal_url=creds["modal_app_url"]))
+        await interaction.response.send_modal(
+            CreateForm(modal_url=modal_url, is_free_run=is_free_run)
+        )
 
 
 async def setup(bot: commands.Bot):

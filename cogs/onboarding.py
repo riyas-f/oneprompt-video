@@ -23,9 +23,10 @@ def build_start_message(username: str | None = None, *, returning: bool = False)
         title,
         (
             f"{intro}\n\n"
-            f"**${cfg.price_usd}/month, unlimited videos. {cfg.polar_trial_days}-day free trial — no charge today.**\n\n"
-            f"**Next step:** `/subscribe` to start your free trial.\n"
-            f"Then `/setmodal` to connect your Modal account, and `/create` to make a video.\n"
+            f"**Try `/create` right now — {cfg.free_generations} free videos, no card, no setup.**\n\n"
+            f"After that: **${cfg.price_usd}/month** for unlimited "
+            f"({cfg.polar_trial_days}-day free trial when you `/subscribe`).\n"
+            f"Pro users connect their own Modal account via `/setmodal`.\n\n"
             f"Run `/help` to see every command."
         ),
     )
@@ -85,11 +86,11 @@ class Onboarding(commands.Cog):
             "OnePrompt — Commands",
             (
                 "`/start` — quick intro\n"
-                f"`/subscribe` — start your {cfg.polar_trial_days}-day free trial (then ${cfg.price_usd}/mo)\n"
-                "`/setmodal` — connect your Modal.com account\n"
+                f"`/create` — generate a video ({cfg.free_generations} free, then needs `/subscribe`)\n"
+                f"`/subscribe` — go unlimited: {cfg.polar_trial_days}-day trial, then ${cfg.price_usd}/mo\n"
+                "`/setmodal` — connect your Modal.com account (Pro only)\n"
                 "`/style` — pick your video art style (8 presets + custom)\n"
                 "`/voice` — pick your narrator voice\n"
-                "`/create` — generate a new video\n"
                 "`/status` — your subscription, style, voice + current job\n"
                 "`/balance` — Modal account billing\n"
                 "`/videos` — your last 5 videos\n"
