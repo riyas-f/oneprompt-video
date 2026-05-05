@@ -57,7 +57,7 @@ Header: `X-Signature: sha256=<HMAC-SHA256(callback_secret, raw_body)>`.
 | Command | Purpose |
 |---|---|
 | `/start` | Welcome + pricing |
-| `/subscribe` | Suby checkout |
+| `/subscribe` | Polar.sh checkout (7-day free trial) |
 | `/setmodal` | Form → encrypts tokens → deploys `modal_app/app.py` |
 | `/create` | Form → kicks off video generation |
 | `/status` | Subscription + Modal connection + current job |
