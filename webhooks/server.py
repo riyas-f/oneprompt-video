@@ -106,22 +106,57 @@ def build_app(bot: discord.Client) -> web.Application:
                 username = meta.get("discord_username") or (user_row or {}).get("discord_username") or "user"
                 await db.upsert_user(discord_id, username)
                 await db.mark_subscribed(discord_id, customer_id, sub_id)
+
+                # Pick tier from product_id. Default to Pro if anything else is set.
+                product_id = str(
+                    data.get("product_id")
+                    or (data.get("product") or {}).get("id")
+                    or ""
+                )
+                tier = "studio" if product_id == cfg.polar_product_id_studio else "pro"
+
+                # Reset hosted-Modal counter to align with the new period.
+                # Use Polar's current_period_end if present; else fall back to +30d.
+                from datetime import datetime, timedelta, timezone
+                period_end_raw = data.get("current_period_end")
+                quota_reset_at = None
+                if period_end_raw:
+                    try:
+                        quota_reset_at = datetime.fromisoformat(
+                            period_end_raw.replace("Z", "+00:00")
+                        ).replace(tzinfo=None)
+                    except Exception:
+                        quota_reset_at = None
+                if quota_reset_at is None:
+                    quota_reset_at = datetime.utcnow() + timedelta(days=30)
+                await db.set_tier(discord_id, tier, quota_reset_at)
+
                 if checkout_id:
                     await db.delete_pending_checkout(str(checkout_id))
                 if not already_pro:
                     trialing = status == "trialing"
-                    title = (
-                        "Your free trial has started"
-                        if trialing else "You're subscribed to OnePrompt Pro"
-                    )
-                    body = (
-                        f"You have **{cfg.polar_trial_days} days** of full Pro access. "
-                        "**Next step:** run `/setmodal` to connect your Modal.com account, "
-                        "then `/create` to generate your first video."
-                        if trialing else
-                        "**Next step:** run `/setmodal` to connect your Modal.com account, "
-                        "then `/create` to generate your first video."
-                    )
+                    if tier == "studio":
+                        title = "Welcome to OnePrompt Studio"
+                        body = (
+                            "**Unlimited videos** — bring your own Modal.com account.\n\n"
+                            "**Next step:** run `/setmodal` to connect Modal, then `/create`."
+                        )
+                    else:
+                        title = (
+                            "Your free trial has started"
+                            if trialing else "You're subscribed to OnePrompt Pro"
+                        )
+                        quota_label = (
+                            f"**{cfg.trial_quota} videos** during your "
+                            f"{cfg.polar_trial_days}-day trial"
+                            if trialing else
+                            f"**{cfg.pro_monthly_quota} videos / month**"
+                        )
+                        body = (
+                            f"{quota_label} on our shared Modal — no setup needed.\n\n"
+                            "Just run `/create` and you're off. Want unlimited and your "
+                            "own Modal? Upgrade to **Studio** anytime."
+                        )
                     await _dm(bot, discord_id, embeds.success(title, body))
             else:
                 # past_due, unpaid, canceled, incomplete, etc.

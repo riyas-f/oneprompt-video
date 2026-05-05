@@ -12,6 +12,11 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 ALTER TABLE users ADD COLUMN IF NOT EXISTS free_attempts_used INT NOT NULL DEFAULT 0;
+-- Tier identity: 'free' | 'pro' (hosted, monthly quota) | 'studio' (BYO Modal, unlimited).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'free';
+-- Per-billing-period hosted-Modal usage. Reset when quota_reset_at < NOW().
+ALTER TABLE users ADD COLUMN IF NOT EXISTS videos_used_period INT NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS quota_reset_at TIMESTAMP;
 
 CREATE TABLE IF NOT EXISTS modal_credentials (
     discord_id BIGINT PRIMARY KEY REFERENCES users(discord_id) ON DELETE CASCADE,

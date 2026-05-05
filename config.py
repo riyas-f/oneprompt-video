@@ -23,10 +23,14 @@ class Config:
 
     polar_access_token: str
     polar_webhook_secret: str
-    polar_product_id: str
+    polar_product_id_pro: str
+    polar_product_id_studio: str
     polar_api_base: str
     polar_success_url: str
     polar_trial_days: int
+    pro_monthly_quota: int
+    trial_quota: int
+    max_hosted_videos_per_day: int
 
     encryption_key: str
 
@@ -54,10 +58,14 @@ def load() -> Config:
         database_url=_req("DATABASE_URL"),
         polar_access_token=_req("POLAR_ACCESS_TOKEN"),
         polar_webhook_secret=_req("POLAR_WEBHOOK_SECRET"),
-        polar_product_id=_req("POLAR_PRODUCT_ID"),
+        polar_product_id_pro=_req("POLAR_PRODUCT_ID_PRO"),
+        polar_product_id_studio=_req("POLAR_PRODUCT_ID_STUDIO"),
         polar_api_base=os.getenv("POLAR_API_BASE", "https://api.polar.sh"),
         polar_success_url=os.getenv("POLAR_SUCCESS_URL", ""),
         polar_trial_days=int(os.getenv("POLAR_TRIAL_DAYS", "7")),
+        pro_monthly_quota=int(os.getenv("PRO_MONTHLY_QUOTA", "30")),
+        trial_quota=int(os.getenv("TRIAL_QUOTA", "10")),
+        max_hosted_videos_per_day=int(os.getenv("MAX_HOSTED_VIDEOS_PER_DAY", "200")),
         encryption_key=_req("ENCRYPTION_KEY"),
         modal_app_path=os.getenv("MODAL_APP_PATH", "./modal_app/app.py"),
         modal_graphql_url=os.getenv("MODAL_GRAPHQL_URL", "https://api.modal.com/graphql"),

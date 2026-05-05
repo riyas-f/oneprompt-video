@@ -31,10 +31,11 @@ class CreateForm(discord.ui.Modal, title="Generate a video"):
         max_length=1000,
     )
 
-    def __init__(self, modal_url: str, *, is_free_run: bool = False):
+    def __init__(self, modal_url: str, *, meter: str = "none"):
+        """meter: 'none' (Studio/BYO), 'free' (lifetime free counter), 'period' (Pro hosted monthly)."""
         super().__init__()
         self._modal_url = modal_url
-        self._is_free_run = is_free_run
+        self._meter = meter
 
     async def on_submit(self, interaction: discord.Interaction):
         topic = str(self.topic.value).strip()
@@ -83,15 +84,18 @@ class CreateForm(discord.ui.Modal, title="Generate a video"):
             )
             return
 
-        # Only burn a free credit once dispatch has succeeded.
+        # Only meter usage once dispatch has succeeded.
         free_note = ""
-        if self._is_free_run:
+        if self._meter == "free":
             used = await db.increment_free_attempt(interaction.user.id)
             remaining = max(0, cfg.free_generations - used)
             free_note = (
                 f"\n\n*Free preview {used}/{cfg.free_generations}. "
                 f"{remaining} left — `/subscribe` for unlimited.*"
             )
+        elif self._meter == "period":
+            used = await db.increment_period_usage(interaction.user.id)
+            free_note = f"\n\n*Pro: {used}/{cfg.pro_monthly_quota} videos this period.*"
 
         await interaction.response.send_message(
             embed=embeds.processing(
@@ -108,35 +112,78 @@ class VideoCog(commands.Cog):
 
     @app_commands.command(name="create", description="Generate a new video")
     async def create(self, interaction: discord.Interaction):
-        # Make sure the user row exists so increment_free_attempt has a target.
         await db.upsert_user(interaction.user.id, interaction.user.name)
         user = await db.get_user(interaction.user.id)
+        tier = (user or {}).get("tier") or "free"
         is_pro = bool(user and user["subscription_status"] == "pro")
         free_used = int((user or {}).get("free_attempts_used", 0) or 0)
 
-        if is_pro:
+        if is_pro and tier == "studio":
             creds = await db.get_modal_credentials(interaction.user.id)
             if not creds or not creds.get("modal_app_url"):
                 await interaction.response.send_message(
                     embed=embeds.error(
                         "Modal not connected",
-                        "Please set up your Modal account first using `/setmodal`.",
+                        "You're on **Studio** — please connect your Modal account "
+                        "with `/setmodal` to start generating.",
                     ),
                     ephemeral=True,
                 )
                 return
             modal_url = creds["modal_app_url"]
-            is_free_run = False
-        elif free_used < cfg.free_generations:
+            meter = "none"
+
+        elif is_pro and tier == "pro":
+            # Hosted Pro with monthly quota.
+            used = await db.get_or_reset_period_usage(interaction.user.id)
+            if used >= cfg.pro_monthly_quota:
+                reset = (user or {}).get("quota_reset_at")
+                when = f" Resets <t:{int(reset.timestamp())}:R>." if reset else ""
+                await interaction.response.send_message(
+                    embed=embeds.error(
+                        "Monthly quota reached",
+                        f"You've used all **{cfg.pro_monthly_quota}** videos for this period.{when}\n\n"
+                        "Need more? Upgrade to **Studio** ($79/mo) for unlimited videos with "
+                        "your own Modal account.",
+                    ),
+                    ephemeral=True,
+                )
+                return
+            # Global daily fuse — protects against runaway Modal spend.
+            if await db.count_hosted_videos_today() >= cfg.max_hosted_videos_per_day:
+                await interaction.response.send_message(
+                    embed=embeds.error(
+                        "Service busy",
+                        "We've hit today's hosted-Modal capacity. Please try again "
+                        "in a few hours, or upgrade to Studio for unmetered access.",
+                    ),
+                    ephemeral=True,
+                )
+                return
             modal_url = cfg.admin_modal_url
-            is_free_run = True
+            meter = "period"
+
+        elif free_used < cfg.free_generations:
+            if await db.count_hosted_videos_today() >= cfg.max_hosted_videos_per_day:
+                await interaction.response.send_message(
+                    embed=embeds.error(
+                        "Service busy",
+                        "We've hit today's free-tier capacity. Please try again later.",
+                    ),
+                    ephemeral=True,
+                )
+                return
+            modal_url = cfg.admin_modal_url
+            meter = "free"
+
         else:
             await interaction.response.send_message(
                 embed=embeds.error(
                     "Free previews used",
                     f"You've used your {cfg.free_generations} free videos. "
-                    f"Run **`/subscribe`** to keep generating — ${cfg.price_usd}/month "
-                    f"with a {cfg.polar_trial_days}-day free trial.",
+                    f"Run **`/subscribe`** to pick a plan — Pro ${cfg.price_usd}/mo "
+                    f"({cfg.pro_monthly_quota} videos/mo, hosted) or Studio $79/mo "
+                    "(unlimited, BYO Modal).",
                 ),
                 ephemeral=True,
             )
@@ -153,7 +200,7 @@ class VideoCog(commands.Cog):
             return
 
         await interaction.response.send_modal(
-            CreateForm(modal_url=modal_url, is_free_run=is_free_run)
+            CreateForm(modal_url=modal_url, meter=meter)
         )
 
 
