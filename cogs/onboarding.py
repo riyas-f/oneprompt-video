@@ -26,8 +26,8 @@ def build_start_message(username: str | None = None, *, returning: bool = False)
             f"**Try `/create` right now — {cfg.free_generations} free videos, no card, no setup.**\n\n"
             f"After that, pick a plan with `/subscribe`:\n"
             f"• **Pro ${cfg.price_usd}/mo** — {cfg.pro_monthly_quota} videos/mo, hosted "
-            f"({cfg.polar_trial_days}-day free trial).\n"
-            f"• **Studio $79/mo** — unlimited, bring your own Modal account.\n\n"
+            f"({cfg.polar_trial_days}-day free trial, {cfg.trial_quota} videos).\n"
+            f"• **Studio $79/mo** — {cfg.studio_monthly_quota} videos/mo, bring your own Modal account.\n\n"
             f"Run `/help` to see every command."
         ),
     )
@@ -79,10 +79,10 @@ class Onboarding(commands.Cog):
 
         e = embeds.info(
             "Pick your plan",
-            f"**Pro — ${cfg.price_usd}/mo** · {cfg.pro_monthly_quota} videos / month\n"
-            f"  ↳ {cfg.polar_trial_days}-day free trial. We host Modal — no setup.\n\n"
-            "**Studio — $79/mo** · unlimited videos\n"
-            "  ↳ Bring your own Modal account (`/setmodal`). For agencies & power users.",
+            f"**Pro — ${cfg.price_usd}/mo** · {cfg.pro_monthly_quota} videos / month · hosted\n"
+            f"  ↳ {cfg.polar_trial_days}-day free trial ({cfg.trial_quota} videos). Zero setup.\n\n"
+            f"**Studio — $79/mo** · {cfg.studio_monthly_quota} videos / month · bring your own Modal\n"
+            "  ↳ For agencies. One-time `/setmodal` after upgrade — you keep control of your compute.",
         )
         view = discord.ui.View()
         view.add_item(discord.ui.Button(
@@ -104,7 +104,7 @@ class Onboarding(commands.Cog):
             (
                 "`/start` — quick intro\n"
                 f"`/create` — generate a video ({cfg.free_generations} free, then `/subscribe`)\n"
-                f"`/subscribe` — Pro ${cfg.price_usd}/mo ({cfg.pro_monthly_quota} videos) or Studio $79/mo (unlimited)\n"
+                f"`/subscribe` — Pro ${cfg.price_usd}/mo ({cfg.pro_monthly_quota} videos) or Studio $79/mo ({cfg.studio_monthly_quota} videos, BYO Modal)\n"
                 "`/setmodal` — connect your Modal.com account (Studio only)\n"
                 "`/style` — pick your video art style (8 presets + custom)\n"
                 "`/voice` — pick your narrator voice\n"
