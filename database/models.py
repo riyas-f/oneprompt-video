@@ -69,7 +69,7 @@ async def count_hosted_videos_today() -> int:
         return int(row["n"]) if row else 0
 
 
-async def set_tier(discord_id: int, tier: str, quota_reset_at) -> None:
+async def set_tier(discord_id: int, tier: str, quota_reset_at, is_trialing: bool = False) -> None:
     """Set the user's tier and reset their period counter to 0."""
     async with pool().acquire() as c:
         await c.execute(
@@ -77,10 +77,11 @@ async def set_tier(discord_id: int, tier: str, quota_reset_at) -> None:
             UPDATE users
                SET tier = $2,
                    videos_used_period = 0,
-                   quota_reset_at = $3
+                   quota_reset_at = $3,
+                   is_trialing = $4
              WHERE discord_id = $1
             """,
-            discord_id, tier, quota_reset_at,
+            discord_id, tier, quota_reset_at, is_trialing,
         )
 
 

@@ -129,7 +129,7 @@ def build_app(bot: discord.Client) -> web.Application:
                         quota_reset_at = None
                 if quota_reset_at is None:
                     quota_reset_at = datetime.utcnow() + timedelta(days=30)
-                await db.set_tier(discord_id, tier, quota_reset_at)
+                await db.set_tier(discord_id, tier, quota_reset_at, is_trialing=(status == "trialing"))
 
                 if checkout_id:
                     await db.delete_pending_checkout(str(checkout_id))
@@ -138,7 +138,8 @@ def build_app(bot: discord.Client) -> web.Application:
                     if tier == "studio":
                         title = "Welcome to OnePrompt Studio"
                         body = (
-                            "**Unlimited videos** — bring your own Modal.com account.\n\n"
+                            f"**{cfg.studio_monthly_quota} videos / month** — "
+                            "bring your own Modal.com account.\n\n"
                             "**Next step:** run `/setmodal` to connect Modal, then `/create`."
                         )
                     else:

@@ -31,11 +31,13 @@ class CreateForm(discord.ui.Modal, title="Generate a video"):
         max_length=1000,
     )
 
-    def __init__(self, modal_url: str, *, meter: str = "none"):
-        """meter: 'none' (Studio/BYO), 'free' (lifetime free counter), 'period' (Pro hosted monthly)."""
+    def __init__(self, modal_url: str, *, meter: str = "none", quota: int = 0, trialing: bool = False):
+        """meter: 'none' (no counter), 'free' (lifetime free counter), 'period' (monthly period counter)."""
         super().__init__()
         self._modal_url = modal_url
         self._meter = meter
+        self._quota = quota
+        self._trialing = trialing
 
     async def on_submit(self, interaction: discord.Interaction):
         topic = str(self.topic.value).strip()
@@ -95,7 +97,8 @@ class CreateForm(discord.ui.Modal, title="Generate a video"):
             )
         elif self._meter == "period":
             used = await db.increment_period_usage(interaction.user.id)
-            free_note = f"\n\n*Pro: {used}/{cfg.pro_monthly_quota} videos this period.*"
+            label = "Trial" if self._trialing else "Plan"
+            free_note = f"\n\n*{label}: {used}/{self._quota} videos this period.*"
 
         await interaction.response.send_message(
             embed=embeds.processing(
@@ -118,6 +121,10 @@ class VideoCog(commands.Cog):
         is_pro = bool(user and user["subscription_status"] == "pro")
         free_used = int((user or {}).get("free_attempts_used", 0) or 0)
 
+        is_trialing = bool((user or {}).get("is_trialing"))
+        quota = 0
+        trialing_flag = False
+
         if is_pro and tier == "studio":
             creds = await db.get_modal_credentials(interaction.user.id)
             if not creds or not creds.get("modal_app_url"):
@@ -130,22 +137,45 @@ class VideoCog(commands.Cog):
                     ephemeral=True,
                 )
                 return
-            modal_url = creds["modal_app_url"]
-            meter = "none"
-
-        elif is_pro and tier == "pro":
-            # Hosted Pro with monthly quota.
             used = await db.get_or_reset_period_usage(interaction.user.id)
-            if used >= cfg.pro_monthly_quota:
+            if used >= cfg.studio_monthly_quota:
                 reset = (user or {}).get("quota_reset_at")
                 when = f" Resets <t:{int(reset.timestamp())}:R>." if reset else ""
                 await interaction.response.send_message(
                     embed=embeds.error(
                         "Monthly quota reached",
-                        f"You've used all **{cfg.pro_monthly_quota}** videos for this period.{when}\n\n"
-                        "Need more? Upgrade to **Studio** ($79/mo) for unlimited videos with "
-                        "your own Modal account.",
+                        f"You've used all **{cfg.studio_monthly_quota}** Studio videos "
+                        f"for this period.{when}\n\nFor higher volume, contact `/support` "
+                        "about Enterprise pricing.",
                     ),
+                    ephemeral=True,
+                )
+                return
+            modal_url = creds["modal_app_url"]
+            meter = "period"
+            quota = cfg.studio_monthly_quota
+
+        elif is_pro and tier == "pro":
+            # Hosted Pro: tighter cap during trial than the paid period.
+            effective_quota = cfg.trial_quota if is_trialing else cfg.pro_monthly_quota
+            used = await db.get_or_reset_period_usage(interaction.user.id)
+            if used >= effective_quota:
+                reset = (user or {}).get("quota_reset_at")
+                when = f" Resets <t:{int(reset.timestamp())}:R>." if reset else ""
+                if is_trialing:
+                    msg = (
+                        f"You've used all **{cfg.trial_quota}** trial videos. "
+                        "Your trial converts automatically — once it does, you'll get "
+                        f"**{cfg.pro_monthly_quota} videos / month**."
+                    )
+                else:
+                    msg = (
+                        f"You've used all **{cfg.pro_monthly_quota}** videos for this period.{when}\n\n"
+                        "Need more? Upgrade to **Studio** ($79/mo) for "
+                        f"{cfg.studio_monthly_quota} videos / month with your own Modal account."
+                    )
+                await interaction.response.send_message(
+                    embed=embeds.error("Quota reached", msg),
                     ephemeral=True,
                 )
                 return
@@ -155,13 +185,15 @@ class VideoCog(commands.Cog):
                     embed=embeds.error(
                         "Service busy",
                         "We've hit today's hosted-Modal capacity. Please try again "
-                        "in a few hours, or upgrade to Studio for unmetered access.",
+                        "in a few hours, or upgrade to Studio for your own Modal compute.",
                     ),
                     ephemeral=True,
                 )
                 return
             modal_url = cfg.admin_modal_url
             meter = "period"
+            quota = effective_quota
+            trialing_flag = is_trialing
 
         elif free_used < cfg.free_generations:
             if await db.count_hosted_videos_today() >= cfg.max_hosted_videos_per_day:
@@ -183,7 +215,7 @@ class VideoCog(commands.Cog):
                     f"You've used your {cfg.free_generations} free videos. "
                     f"Run **`/subscribe`** to pick a plan — Pro ${cfg.price_usd}/mo "
                     f"({cfg.pro_monthly_quota} videos/mo, hosted) or Studio $79/mo "
-                    "(unlimited, BYO Modal).",
+                    f"({cfg.studio_monthly_quota} videos/mo, BYO Modal).",
                 ),
                 ephemeral=True,
             )
@@ -200,7 +232,7 @@ class VideoCog(commands.Cog):
             return
 
         await interaction.response.send_modal(
-            CreateForm(modal_url=modal_url, meter=meter)
+            CreateForm(modal_url=modal_url, meter=meter, quota=quota, trialing=trialing_flag)
         )
 
 

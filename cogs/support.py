@@ -73,11 +73,18 @@ class SupportCog(commands.Cog):
         if tier == "pro":
             used_period = int((user or {}).get("videos_used_period", 0) or 0)
             reset_at = (user or {}).get("quota_reset_at")
-            quota_line = f"**This period:** {used_period}/{cfg.pro_monthly_quota} videos"
-            if reset_at:
+            is_trialing = bool((user or {}).get("is_trialing"))
+            cap = cfg.trial_quota if is_trialing else cfg.pro_monthly_quota
+            label = "Trial" if is_trialing else "This period"
+            quota_line = f"**{label}:** {used_period}/{cap} videos"
+            if reset_at and not is_trialing:
                 quota_line += f" — resets <t:{int(reset_at.timestamp())}:R>"
         elif tier == "studio":
-            quota_line = "**This period:** unlimited (Studio)"
+            used_period = int((user or {}).get("videos_used_period", 0) or 0)
+            reset_at = (user or {}).get("quota_reset_at")
+            quota_line = f"**This period:** {used_period}/{cfg.studio_monthly_quota} videos"
+            if reset_at:
+                quota_line += f" — resets <t:{int(reset_at.timestamp())}:R>"
         else:
             free_used = int((user or {}).get("free_attempts_used", 0) or 0)
             quota_line = f"**Free previews:** {free_used}/{cfg.free_generations} used"

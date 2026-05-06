@@ -29,6 +29,7 @@ class Config:
     polar_success_url: str
     polar_trial_days: int
     pro_monthly_quota: int
+    studio_monthly_quota: int
     trial_quota: int
     max_hosted_videos_per_day: int
 
@@ -63,8 +64,9 @@ def load() -> Config:
         polar_api_base=os.getenv("POLAR_API_BASE", "https://api.polar.sh"),
         polar_success_url=os.getenv("POLAR_SUCCESS_URL", ""),
         polar_trial_days=int(os.getenv("POLAR_TRIAL_DAYS", "7")),
-        pro_monthly_quota=int(os.getenv("PRO_MONTHLY_QUOTA", "30")),
-        trial_quota=int(os.getenv("TRIAL_QUOTA", "10")),
+        pro_monthly_quota=int(os.getenv("PRO_MONTHLY_QUOTA", "20")),
+        studio_monthly_quota=int(os.getenv("STUDIO_MONTHLY_QUOTA", "100")),
+        trial_quota=int(os.getenv("TRIAL_QUOTA", "5")),
         max_hosted_videos_per_day=int(os.getenv("MAX_HOSTED_VIDEOS_PER_DAY", "200")),
         encryption_key=_req("ENCRYPTION_KEY"),
         modal_app_path=os.getenv("MODAL_APP_PATH", "./modal_app/app.py"),
