@@ -19,14 +19,17 @@ def build_start_message(username: str | None = None, *, returning: bool = False)
     else:
         title = f"Welcome to OnePrompt{f', {username}' if username else ''}"
         intro = "Generate faceless AI videos from a single prompt — straight from Discord."
+    trial_blurb = (
+        f" ({cfg.polar_trial_days}-day free trial, {cfg.trial_quota} videos)"
+        if cfg.polar_trial_days > 0 else ""
+    )
     return embeds.welcome(
         title,
         (
             f"{intro}\n\n"
             f"**Try `/create` right now — {cfg.free_generations} free videos, no card, no setup.**\n\n"
             f"After that, pick a plan with `/subscribe`:\n"
-            f"• **Pro ${cfg.price_usd}/mo** — {cfg.pro_monthly_quota} videos/mo, hosted "
-            f"({cfg.polar_trial_days}-day free trial, {cfg.trial_quota} videos).\n"
+            f"• **Pro ${cfg.price_usd}/mo** — {cfg.pro_monthly_quota} videos/mo, hosted{trial_blurb}.\n"
             f"• **Studio $79/mo** — {cfg.studio_monthly_quota} videos/mo, bring your own Modal account.\n\n"
             f"Run `/help` to see every command."
         ),
@@ -77,16 +80,26 @@ class Onboarding(commands.Cog):
             )
             return
 
+        pro_subline = (
+            f"  ↳ {cfg.polar_trial_days}-day free trial ({cfg.trial_quota} videos). Zero setup."
+            if cfg.polar_trial_days > 0
+            else "  ↳ Zero setup. Cancel anytime."
+        )
         e = embeds.info(
             "Pick your plan",
             f"**Pro — ${cfg.price_usd}/mo** · {cfg.pro_monthly_quota} videos / month · hosted\n"
-            f"  ↳ {cfg.polar_trial_days}-day free trial ({cfg.trial_quota} videos). Zero setup.\n\n"
+            f"{pro_subline}\n\n"
             f"**Studio — $79/mo** · {cfg.studio_monthly_quota} videos / month · bring your own Modal\n"
             "  ↳ For agencies. One-time `/setmodal` after upgrade — you keep control of your compute.",
         )
+        pro_button_label = (
+            f"Start Pro trial — ${cfg.price_usd}/mo"
+            if cfg.polar_trial_days > 0
+            else f"Get Pro — ${cfg.price_usd}/mo"
+        )
         view = discord.ui.View()
         view.add_item(discord.ui.Button(
-            label=f"Start Pro trial — ${cfg.price_usd}/mo",
+            label=pro_button_label,
             url=pro_url,
             style=discord.ButtonStyle.link,
         ))
