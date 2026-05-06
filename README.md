@@ -57,7 +57,7 @@ Header: `X-Signature: sha256=<HMAC-SHA256(callback_secret, raw_body)>`.
 | Command | Purpose |
 |---|---|
 | `/start` | Welcome + pricing |
-| `/subscribe` | Polar.sh checkout (7-day free trial) |
+| `/subscribe` | Pick a plan: Pro ($29/mo, hosted, monthly quota) or Studio ($79/mo, BYO Modal, unlimited) |
 | `/setmodal` | Form → encrypts tokens → deploys `modal_app/app.py` |
 | `/create` | Form → kicks off video generation. First `FREE_GENERATIONS` runs use the bot owner's Modal (no `/setmodal` needed); after that requires `/subscribe` + `/setmodal`. |
 | `/status` | Subscription + Modal connection + current job |
@@ -79,6 +79,15 @@ Header: `X-Signature: sha256=<HMAC-SHA256(callback_secret, raw_body)>`.
   incremented only after a successful API dispatch (failed runs don't
   burn a credit). To deploy the admin app: `cd modal_app && modal deploy app.py`,
   then put the printed URL in `.env`.
+- **Tiers**: Free (2 lifetime hosted), Pro ($29/mo hosted with
+  `PRO_MONTHLY_QUOTA` videos/period), Studio ($79/mo BYO Modal,
+  unlimited). Tier is set on `users.tier` by the Polar webhook based
+  on `product_id` (`POLAR_PRODUCT_ID_PRO` vs `POLAR_PRODUCT_ID_STUDIO`).
+  Pro period counter resets at `users.quota_reset_at`, which the
+  webhook copies from Polar's `current_period_end`.
+- **Cost circuit-breaker** — `MAX_HOSTED_VIDEOS_PER_DAY` (default 200)
+  globally caps free + Pro hosted-Modal runs per 24h. Studio (BYO) is
+  unaffected. Bump or zero it from `.env` if you spot abuse.
 - **Auto-DM on install** — when a user installs OnePrompt as a User App,
   Discord sends `APPLICATION_AUTHORIZED` and we DM the welcome message
   (same content as `/start`; "welcome back" variant for returning users).

@@ -62,16 +62,34 @@ class SupportCog(commands.Cog):
         prefs = await db.get_user_preferences(interaction.user.id) if user else None
 
         sub = (user or {}).get("subscription_status", "free")
+        tier = (user or {}).get("tier") or "free"
         sub_since = (user or {}).get("subscribed_at")
-        sub_line = f"**Subscription:** `{sub}`"
+        sub_line = f"**Plan:** `{tier}`" + (f" (status: `{sub}`)" if tier != "free" else "")
         if sub_since:
             sub_line += f" — since <t:{int(sub_since.timestamp())}:D>"
 
-        modal_line = "**Modal connected:** "
-        if creds and creds.get("modal_app_url"):
-            modal_line += "✅ Yes"
+        # Quota / usage line varies by tier.
+        from config import cfg
+        if tier == "pro":
+            used_period = int((user or {}).get("videos_used_period", 0) or 0)
+            reset_at = (user or {}).get("quota_reset_at")
+            quota_line = f"**This period:** {used_period}/{cfg.pro_monthly_quota} videos"
+            if reset_at:
+                quota_line += f" — resets <t:{int(reset_at.timestamp())}:R>"
+        elif tier == "studio":
+            quota_line = "**This period:** unlimited (Studio)"
         else:
-            modal_line += "❌ No (use `/setmodal`)"
+            free_used = int((user or {}).get("free_attempts_used", 0) or 0)
+            quota_line = f"**Free previews:** {free_used}/{cfg.free_generations} used"
+
+        # Modal connection only matters for Studio tier.
+        if tier == "studio":
+            if creds and creds.get("modal_app_url"):
+                modal_line = "**Modal connected:** ✅ Yes"
+            else:
+                modal_line = "**Modal connected:** ❌ No (use `/setmodal`)"
+        else:
+            modal_line = ""
 
         job_line = "**Current job:** " + ("⏳ Processing" if current else "None")
 
@@ -83,7 +101,7 @@ class SupportCog(commands.Cog):
             voice_line = ""
 
         body = "\n".join(
-            line for line in [sub_line, modal_line, style_line, voice_line,
+            line for line in [sub_line, quota_line, modal_line, style_line, voice_line,
                               f"**Videos generated:** {count}", job_line]
             if line
         )

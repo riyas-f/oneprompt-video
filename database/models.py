@@ -27,6 +27,63 @@ async def get_user(discord_id: int) -> Optional[dict]:
         return dict(row) if row else None
 
 
+async def get_or_reset_period_usage(discord_id: int) -> int:
+    """Return current period hosted-Modal usage, resetting first if quota_reset_at has passed."""
+    async with pool().acquire() as c:
+        row = await c.fetchrow(
+            """
+            UPDATE users
+               SET videos_used_period = CASE
+                       WHEN quota_reset_at IS NOT NULL AND quota_reset_at < NOW()
+                       THEN 0
+                       ELSE videos_used_period
+                   END
+             WHERE discord_id = $1
+             RETURNING videos_used_period
+            """,
+            discord_id,
+        )
+        return int(row["videos_used_period"]) if row else 0
+
+
+async def increment_period_usage(discord_id: int) -> int:
+    """Atomically bump videos_used_period; returns the new value."""
+    async with pool().acquire() as c:
+        row = await c.fetchrow(
+            """
+            UPDATE users SET videos_used_period = videos_used_period + 1
+            WHERE discord_id = $1
+            RETURNING videos_used_period
+            """,
+            discord_id,
+        )
+        return int(row["videos_used_period"]) if row else 0
+
+
+async def count_hosted_videos_today() -> int:
+    """Global count of completed jobs in the last 24h (cost circuit-breaker)."""
+    async with pool().acquire() as c:
+        row = await c.fetchrow(
+            "SELECT COUNT(*) AS n FROM video_jobs WHERE started_at >= NOW() - INTERVAL '1 day'"
+        )
+        return int(row["n"]) if row else 0
+
+
+async def set_tier(discord_id: int, tier: str, quota_reset_at) -> None:
+    """Set the user's tier and reset their period counter to 0."""
+    async with pool().acquire() as c:
+        await c.execute(
+            """
+            UPDATE users
+               SET tier = $2,
+                   videos_used_period = 0,
+                   quota_reset_at = $3
+             WHERE discord_id = $1
+            """,
+            discord_id, tier, quota_reset_at,
+        )
+
+
 async def increment_free_attempt(discord_id: int) -> int:
     """Atomically bump the free-tier counter; returns the new value."""
     async with pool().acquire() as c:

@@ -78,7 +78,7 @@ class SetupCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="setmodal", description="Connect your Modal.com account")
+    @app_commands.command(name="setmodal", description="Connect your Modal.com account (Studio tier)")
     async def setmodal(self, interaction: discord.Interaction):
         user = await db.get_user(interaction.user.id)
         if not user or user["subscription_status"] != "pro":
@@ -86,6 +86,18 @@ class SetupCog(commands.Cog):
                 embed=embeds.error(
                     "Subscription required",
                     "You need an active subscription first. Use `/subscribe` to get started.",
+                ),
+                ephemeral=True,
+            )
+            return
+        if (user.get("tier") or "free") != "studio":
+            await interaction.response.send_message(
+                embed=embeds.info(
+                    "You're on Pro (hosted)",
+                    "`/setmodal` is for the **Studio** tier — bring your own Modal "
+                    "account for unlimited videos. You're currently on **Pro** "
+                    "(hosted Modal, monthly quota), no setup needed. Use `/create` "
+                    "to generate; or upgrade to Studio with `/subscribe`.",
                 ),
                 ephemeral=True,
             )

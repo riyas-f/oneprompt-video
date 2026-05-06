@@ -26,16 +26,20 @@ POLAR_API_BASE = "https://api.polar.sh"
 WEBHOOK_TOLERANCE_SECONDS = 5 * 60
 
 
-async def create_checkout_session(discord_id: int, discord_username: str) -> tuple[str, str]:
+async def create_checkout_session(
+    discord_id: int,
+    discord_username: str,
+    product_id: str,
+) -> tuple[str, str]:
     """Create a Polar subscription checkout. Returns (checkout_url, checkout_id).
 
-    Trial length is configured on the Polar product itself (7 days for
-    OnePrompt Pro). The checkout inherits it automatically.
+    Trial length is configured on the Polar product itself; the checkout
+    inherits it automatically.
     """
     placeholder_email = f"discord+{discord_id}@oneprompt.app"
 
     payload: dict = {
-        "products": [cfg.polar_product_id],
+        "products": [product_id],
         "customer_email": placeholder_email,
         "customer_name": (discord_username[:64] or "Discord User"),
         "external_customer_id": str(discord_id),
