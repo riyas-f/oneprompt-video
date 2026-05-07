@@ -193,6 +193,7 @@ class VideoGenerator:
                 acodec="aac",
                 pix_fmt="yuv420p",
                 shortest=None,
+                af="loudnorm=I=-16:TP=-1.5:LRA=11",
                 **{
                     "b:a": "192k",
                     "preset": "veryfast",   # static image: quality is dominated by source, not preset
