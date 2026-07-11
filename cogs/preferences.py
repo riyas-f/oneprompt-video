@@ -7,6 +7,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from config import cfg
 from database import models as db
 from services import embeds
 from styles.presets import (
@@ -123,12 +124,15 @@ class VoiceSelect(discord.ui.Select):
         choice = self.values[0]
         await db.set_voice(interaction.user.id, choice)
         v = VOICE_PRESETS[choice]
+        body = (
+            f"Your videos will now be narrated by **{v['emoji']} {v['label']}**.\n"
+            f"_{v['tagline']}_"
+        )
+        if cfg.r2_public_base_url:
+            sample = f"{cfg.r2_public_base_url.rstrip('/')}/audio-samples/{choice}.wav"
+            body += f"\n\n[🔊 Hear a sample]({sample})"
         await interaction.response.edit_message(
-            embed=embeds.success(
-                "Voice updated",
-                f"Your videos will now be narrated by **{v['emoji']} {v['label']}**.\n"
-                f"_{v['tagline']}_",
-            ),
+            embed=embeds.success("Voice updated", body),
             view=None,
         )
 

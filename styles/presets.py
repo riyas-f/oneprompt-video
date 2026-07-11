@@ -149,8 +149,30 @@ def get_style_label(preset_key: str | None, custom: dict | None) -> str:
     return f"{STYLE_PRESETS[DEFAULT_STYLE_PRESET]['emoji']} {STYLE_PRESETS[DEFAULT_STYLE_PRESET]['label']}"
 
 
-# ─── Voice presets (Kokoro) ──────────────────────────────────────────────────
+# ─── Voice presets ────────────────────────────────────────────────────────────
+# Keys starting with cb_ route to Chatterbox Turbo on the render side (more
+# natural prosody, supports [chuckle]/[sigh] tags); the rest are Kokoro.
 VOICE_PRESETS: dict[str, dict] = {
+    "cb_aria": {
+        "label": "Aria — Natural Female",
+        "emoji": "✨",
+        "tagline": "NEW · warm and lifelike — storytelling",
+    },
+    "cb_atlas": {
+        "label": "Atlas — Natural Male",
+        "emoji": "✨",
+        "tagline": "NEW · steady and lifelike — explainers",
+    },
+    "cb_ember": {
+        "label": "Ember — Bright Female",
+        "emoji": "✨",
+        "tagline": "NEW · crisp and energetic — facts, lists",
+    },
+    "cb_oak": {
+        "label": "Oak — Deep Male",
+        "emoji": "✨",
+        "tagline": "NEW · low and deliberate — mystery, docs",
+    },
     "af_heart": {
         "label": "Friendly Female",
         "emoji": "🎙️",

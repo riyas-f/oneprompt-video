@@ -63,6 +63,17 @@ image = (
         "--extra-index-url https://download.pytorch.org/whl/cu128"
     )
     .run_commands("uv pip install --system --compile-bytecode peft")
+    # Chatterbox Turbo TTS. Its package pins torch==2.6.0, so install with
+    # --no-deps against our torch 2.7.1 and add its runtime deps explicitly.
+    .run_commands(
+        "uv pip install --system --compile-bytecode torchaudio==2.7.1 "
+        "--extra-index-url https://download.pytorch.org/whl/cu128"
+    )
+    .run_commands(
+        "uv pip install --system --compile-bytecode --no-deps chatterbox-tts && "
+        "uv pip install --system --compile-bytecode "
+        "librosa s3tokenizer resemble-perth conformer"
+    )
 )
 
 MODEL_NAME = "Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32"
@@ -77,6 +88,23 @@ LIGHTNING_FILE = "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
 # 1080p); _make_clip upscales to the video's target size with Lanczos.
 QEDIT_WIDTH, QEDIT_HEIGHT = 1344, 768
 
+# Chatterbox Turbo voices (keys start with cb_; everything else is Kokoro).
+# Turbo clones pacing + timbre from a reference clip; refs are synthesized
+# once at a deliberately slow speed (fast default pacing was the main
+# complaint) and cached on the volume. Swap any ref for a curated human
+# recording later by replacing /cache/tts_refs/<voice>.wav.
+TURBO_VOICES = {
+    "cb_aria":  {"ref_voice": "bf_alice",   "ref_speed": 0.86},  # warm female
+    "cb_ember": {"ref_voice": "af_sky",     "ref_speed": 0.88},  # bright female
+    "cb_atlas": {"ref_voice": "am_michael", "ref_speed": 0.86},  # steady male
+    "cb_oak":   {"ref_voice": "bm_lewis",   "ref_speed": 0.85},  # deep male
+}
+TURBO_REF_TEXT = (
+    "This is a reference recording for voice cloning. I speak clearly and "
+    "calmly, taking my time with every sentence, so the model can capture "
+    "the tone and unhurried pace of my voice."
+)
+
 # NB: keep these as POSIX strings — str(Path("/cache")) is "\cache" when
 # deploying from Windows, which corrupts the image definition.
 CACHE_DIR = Path("/cache")
@@ -84,6 +112,8 @@ cache_volume = modal.Volume.from_name("hf-hub-cache", create_if_missing=True)
 volumes = {"/cache": cache_volume}
 
 image = image.env({"HF_HOME": "/cache"})
+
+TTS_REFS_DIR = CACHE_DIR / "tts_refs"
 
 app = modal.App("explainer-videos")
 
@@ -152,6 +182,16 @@ class VideoGenerator:
         # Kokoro auto-detects CUDA. It's tiny (~82M params, <1 GB VRAM) and
         # CUDA's stream scheduler interleaves it cleanly with diffusion kernels.
         self.tts = KPipeline(lang_code="a")
+
+        print("→ Loading Chatterbox Turbo TTS...")
+        # Optional engine: cb_* voices. Failure falls back to Kokoro af_heart.
+        self.turbo = None
+        try:
+            from chatterbox.tts_turbo import ChatterboxTurboTTS
+            self.turbo = ChatterboxTurboTTS.from_pretrained(device="cuda")
+            print("✓ Chatterbox Turbo ready")
+        except Exception as e:
+            print(f"⚠ Chatterbox Turbo unavailable ({e}) — cb_ voices fall back to Kokoro")
 
         print("→ Loading Qwen-Image-Edit-2511 (character scenes)...")
         # Both models fit together on L40S (~27 GB of 48). Any failure here
@@ -255,8 +295,33 @@ class VideoGenerator:
         img.save(buf, format="PNG")
         return buf.getvalue()
 
+    def _ensure_turbo_ref(self, voice: str) -> str:
+        """Reference clip for a cb_ voice; synthesized once and cached on the volume."""
+        cfg = TURBO_VOICES[voice]
+        path = TTS_REFS_DIR / f"{voice}.wav"
+        if not path.exists():
+            TTS_REFS_DIR.mkdir(parents=True, exist_ok=True)
+            with self._tts_lock:
+                segs = [aud for _, _, aud in self.tts(
+                    TURBO_REF_TEXT, voice=cfg["ref_voice"], speed=cfg["ref_speed"])]
+            sf.write(str(path), np.concatenate(segs), 24000)
+            with self._commit_lock:
+                cache_volume.commit()
+        return str(path)
+
     def _generate_audio(self, text: str, voice: str = "af_heart",
                         speed: float = 1.0) -> bytes:
+        # Chatterbox Turbo engine for cb_ voices (falls back if unavailable).
+        if voice in TURBO_VOICES:
+            if self.turbo is not None:
+                ref = self._ensure_turbo_ref(voice)
+                with self._tts_lock:
+                    wav = self.turbo.generate(text, audio_prompt_path=ref)
+                buf = BytesIO()
+                sf.write(buf, wav.squeeze(0).cpu().numpy(), self.turbo.sr, format="WAV")
+                return buf.getvalue()
+            voice = "af_heart"
+
         with self._tts_lock:
             segs = [aud for _, _, aud in self.tts(text, voice=voice, speed=speed)]
         if not segs:
