@@ -20,7 +20,7 @@ def build_start_message(username: str | None = None, *, returning: bool = False)
         title = f"Welcome to OnePrompt{f', {username}' if username else ''}"
         intro = "Generate faceless AI videos from a single prompt — straight from Discord."
     trial_blurb = (
-        f" ({cfg.polar_trial_days}-day free trial, {cfg.trial_quota} videos)"
+        f" ({cfg.polar_trial_days}-day free trial, {cfg.trial_minutes} render-min)"
         if cfg.polar_trial_days > 0 else ""
     )
     return embeds.welcome(
@@ -29,8 +29,9 @@ def build_start_message(username: str | None = None, *, returning: bool = False)
             f"{intro}\n\n"
             f"**Try `/create` right now — {cfg.free_generations} free videos, no card, no setup.**\n\n"
             f"After that, pick a plan with `/subscribe`:\n"
-            f"• **Pro ${cfg.price_usd}/mo** — {cfg.pro_monthly_quota} videos/mo, hosted{trial_blurb}.\n"
-            f"• **Studio $79/mo** — {cfg.studio_monthly_quota} videos/mo, bring your own Modal account.\n\n"
+            f"• **Pro ${cfg.price_usd}/mo** — {cfg.pro_monthly_minutes} render-minutes/mo{trial_blurb}.\n"
+            f"• **Studio $79/mo** — {cfg.studio_monthly_minutes} render-minutes/mo + priority rendering.\n"
+            f"Everything is hosted — zero setup on any plan.\n\n"
             f"Run `/help` to see every command."
         ),
     )
@@ -47,7 +48,7 @@ class Onboarding(commands.Cog):
         e = build_start_message(interaction.user.name, returning=existing is not None)
         await interaction.response.send_message(embed=e, ephemeral=True)
 
-    @app_commands.command(name="subscribe", description="Pick a plan: Pro (hosted) or Studio (BYO Modal)")
+    @app_commands.command(name="subscribe", description="Pick a plan: Pro or Studio (both hosted)")
     async def subscribe(self, interaction: discord.Interaction):
         await db.upsert_user(interaction.user.id, interaction.user.name)
         user = await db.get_user(interaction.user.id)
@@ -57,8 +58,8 @@ class Onboarding(commands.Cog):
             e = embeds.success(
                 f"You're already on {tier}",
                 f"Subscribed since: <t:{int(user['subscribed_at'].timestamp())}:D>\n"
-                f"Use `/create` to generate a video, `/status` to check your quota, "
-                f"or `/setmodal` (Studio only).",
+                f"Use `/create` to generate a video and `/status` to check your "
+                f"remaining render-minutes.",
             )
             await interaction.response.send_message(embed=e, ephemeral=True)
             return
@@ -81,16 +82,18 @@ class Onboarding(commands.Cog):
             return
 
         pro_subline = (
-            f"  ↳ {cfg.polar_trial_days}-day free trial ({cfg.trial_quota} videos). Zero setup."
+            f"  ↳ {cfg.polar_trial_days}-day free trial ({cfg.trial_minutes} render-min). Zero setup."
             if cfg.polar_trial_days > 0
             else "  ↳ Zero setup. Cancel anytime."
         )
         e = embeds.info(
             "Pick your plan",
-            f"**Pro — ${cfg.price_usd}/mo** · {cfg.pro_monthly_quota} videos / month · hosted\n"
+            f"**Pro — ${cfg.price_usd}/mo** · {cfg.pro_monthly_minutes} render-minutes / month\n"
             f"{pro_subline}\n\n"
-            f"**Studio — $79/mo** · {cfg.studio_monthly_quota} videos / month · bring your own Modal\n"
-            "  ↳ For agencies. One-time `/setmodal` after upgrade — you keep control of your compute.",
+            f"**Studio — $79/mo** · {cfg.studio_monthly_minutes} render-minutes / month\n"
+            "  ↳ For daily creators & agencies. Priority rendering, first access to new features.\n\n"
+            "A render-minute = one minute of finished video. Both plans fully hosted.\n"
+            "*Bigger volume or custom needs? Ask `/support` about Enterprise.*",
         )
         pro_button_label = (
             f"Start Pro trial — ${cfg.price_usd}/mo"
@@ -117,8 +120,7 @@ class Onboarding(commands.Cog):
             (
                 "`/start` — quick intro\n"
                 f"`/create` — generate a video ({cfg.free_generations} free, then `/subscribe`)\n"
-                f"`/subscribe` — Pro ${cfg.price_usd}/mo ({cfg.pro_monthly_quota} videos) or Studio $79/mo ({cfg.studio_monthly_quota} videos, BYO Modal)\n"
-                "`/setmodal` — connect your Modal.com account (Studio only)\n"
+                f"`/subscribe` — Pro ${cfg.price_usd}/mo ({cfg.pro_monthly_minutes} render-min) or Studio $79/mo ({cfg.studio_monthly_minutes} render-min)\n"
                 "`/style` — pick your video art style (8 presets + custom)\n"
                 "`/voice` — pick your narrator voice\n"
                 "`/status` — your subscription, style, voice + current job\n"

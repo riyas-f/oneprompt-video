@@ -138,9 +138,9 @@ def build_app(bot: discord.Client) -> web.Application:
                     if tier == "studio":
                         title = "Welcome to OnePrompt Studio"
                         body = (
-                            f"**{cfg.studio_monthly_quota} videos / month** — "
-                            "bring your own Modal.com account.\n\n"
-                            "**Next step:** run `/setmodal` to connect Modal, then `/create`."
+                            f"**{cfg.studio_monthly_minutes} render-minutes / month**, "
+                            "fully hosted, priority rendering — zero setup.\n\n"
+                            "Just run `/create` and you're off."
                         )
                     else:
                         title = (
@@ -148,15 +148,16 @@ def build_app(bot: discord.Client) -> web.Application:
                             if trialing else "You're subscribed to OnePrompt Pro"
                         )
                         quota_label = (
-                            f"**{cfg.trial_quota} videos** during your "
+                            f"**{cfg.trial_minutes} render-minutes** during your "
                             f"{cfg.polar_trial_days}-day trial"
                             if trialing else
-                            f"**{cfg.pro_monthly_quota} videos / month**"
+                            f"**{cfg.pro_monthly_minutes} render-minutes / month**"
                         )
                         body = (
-                            f"{quota_label} on our shared Modal — no setup needed.\n\n"
-                            "Just run `/create` and you're off. Want unlimited and your "
-                            "own Modal? Upgrade to **Studio** anytime."
+                            f"{quota_label}, fully hosted — no setup needed.\n\n"
+                            "Just run `/create` and you're off. Need more volume? "
+                            "**Studio** has "
+                            f"{cfg.studio_monthly_minutes} render-minutes / month."
                         )
                     await _dm(bot, discord_id, embeds.success(title, body))
             else:

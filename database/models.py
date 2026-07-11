@@ -28,36 +28,36 @@ async def get_user(discord_id: int) -> Optional[dict]:
 
 
 async def get_or_reset_period_usage(discord_id: int) -> int:
-    """Return current period hosted-Modal usage, resetting first if quota_reset_at has passed."""
+    """Return current period render-minute usage, resetting first if quota_reset_at has passed."""
     async with pool().acquire() as c:
         row = await c.fetchrow(
             """
             UPDATE users
-               SET videos_used_period = CASE
+               SET minutes_used_period = CASE
                        WHEN quota_reset_at IS NOT NULL AND quota_reset_at < NOW()
                        THEN 0
-                       ELSE videos_used_period
+                       ELSE minutes_used_period
                    END
              WHERE discord_id = $1
-             RETURNING videos_used_period
+             RETURNING minutes_used_period
             """,
             discord_id,
         )
-        return int(row["videos_used_period"]) if row else 0
+        return int(row["minutes_used_period"]) if row else 0
 
 
-async def increment_period_usage(discord_id: int) -> int:
-    """Atomically bump videos_used_period; returns the new value."""
+async def increment_period_usage(discord_id: int, minutes: int) -> int:
+    """Atomically add render-minutes to the period counter; returns the new value."""
     async with pool().acquire() as c:
         row = await c.fetchrow(
             """
-            UPDATE users SET videos_used_period = videos_used_period + 1
+            UPDATE users SET minutes_used_period = minutes_used_period + $2
             WHERE discord_id = $1
-            RETURNING videos_used_period
+            RETURNING minutes_used_period
             """,
-            discord_id,
+            discord_id, minutes,
         )
-        return int(row["videos_used_period"]) if row else 0
+        return int(row["minutes_used_period"]) if row else 0
 
 
 async def count_hosted_videos_today() -> int:
@@ -77,6 +77,7 @@ async def set_tier(discord_id: int, tier: str, quota_reset_at, is_trialing: bool
             UPDATE users
                SET tier = $2,
                    videos_used_period = 0,
+                   minutes_used_period = 0,
                    quota_reset_at = $3,
                    is_trialing = $4
              WHERE discord_id = $1

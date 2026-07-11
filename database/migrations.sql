@@ -20,6 +20,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS quota_reset_at TIMESTAMP;
 -- TRUE while the Polar subscription is in its trial window. Used to enforce
 -- a tighter video cap during trial than the paid Pro monthly quota.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_trialing BOOLEAN NOT NULL DEFAULT FALSE;
+-- Quotas are metered in render-minutes (a 3-minute video spends 3).
+-- videos_used_period is retained but dormant since the switch.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS minutes_used_period INT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS modal_credentials (
     discord_id BIGINT PRIMARY KEY REFERENCES users(discord_id) ON DELETE CASCADE,

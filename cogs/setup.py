@@ -8,6 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from config import cfg
 from database import models as db
 from services import embeds
 from services.encryption import encrypt
@@ -78,26 +79,28 @@ class SetupCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="setmodal", description="Connect your Modal.com account (Studio tier)")
+    @app_commands.command(name="setmodal", description="Connect your Modal.com account (Enterprise)")
     async def setmodal(self, interaction: discord.Interaction):
+        # BYO Modal is Enterprise-only now — all public tiers are hosted.
+        # Plumbing kept intact for contract deals (ENABLE_BYO=true).
+        if not cfg.enable_byo:
+            await interaction.response.send_message(
+                embed=embeds.info(
+                    "All plans are hosted now",
+                    "You don't need your own Modal account — every plan runs on "
+                    "our infrastructure, zero setup. Just `/create`.\n\n"
+                    "Bring-your-own-compute is available on **Enterprise** — "
+                    "reach out via `/support` if that's you.",
+                ),
+                ephemeral=True,
+            )
+            return
         user = await db.get_user(interaction.user.id)
         if not user or user["subscription_status"] != "pro":
             await interaction.response.send_message(
                 embed=embeds.error(
                     "Subscription required",
                     "You need an active subscription first. Use `/subscribe` to get started.",
-                ),
-                ephemeral=True,
-            )
-            return
-        if (user.get("tier") or "free") != "studio":
-            await interaction.response.send_message(
-                embed=embeds.info(
-                    "You're on Pro (hosted)",
-                    "`/setmodal` is for the **Studio** tier — bring your own Modal "
-                    "account for unlimited videos. You're currently on **Pro** "
-                    "(hosted Modal, monthly quota), no setup needed. Use `/create` "
-                    "to generate; or upgrade to Studio with `/subscribe`.",
                 ),
                 ephemeral=True,
             )

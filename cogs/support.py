@@ -68,29 +68,27 @@ class SupportCog(commands.Cog):
         if sub_since:
             sub_line += f" — since <t:{int(sub_since.timestamp())}:D>"
 
-        # Quota / usage line varies by tier.
+        # Quota / usage line varies by tier (render-minutes for paid tiers).
         from config import cfg
-        if tier == "pro":
-            used_period = int((user or {}).get("videos_used_period", 0) or 0)
+        if tier in ("pro", "studio"):
+            used_period = int((user or {}).get("minutes_used_period", 0) or 0)
             reset_at = (user or {}).get("quota_reset_at")
             is_trialing = bool((user or {}).get("is_trialing"))
-            cap = cfg.trial_quota if is_trialing else cfg.pro_monthly_quota
-            label = "Trial" if is_trialing else "This period"
-            quota_line = f"**{label}:** {used_period}/{cap} videos"
+            if tier == "studio":
+                cap, label = cfg.studio_monthly_minutes, "This period"
+            elif is_trialing:
+                cap, label = cfg.trial_minutes, "Trial"
+            else:
+                cap, label = cfg.pro_monthly_minutes, "This period"
+            quota_line = f"**{label}:** {used_period}/{cap} render-minutes"
             if reset_at and not is_trialing:
-                quota_line += f" — resets <t:{int(reset_at.timestamp())}:R>"
-        elif tier == "studio":
-            used_period = int((user or {}).get("videos_used_period", 0) or 0)
-            reset_at = (user or {}).get("quota_reset_at")
-            quota_line = f"**This period:** {used_period}/{cfg.studio_monthly_quota} videos"
-            if reset_at:
                 quota_line += f" — resets <t:{int(reset_at.timestamp())}:R>"
         else:
             free_used = int((user or {}).get("free_attempts_used", 0) or 0)
             quota_line = f"**Free previews:** {free_used}/{cfg.free_generations} used"
 
-        # Modal connection only matters for Studio tier.
-        if tier == "studio":
+        # Modal connection only matters for Enterprise BYO deployments.
+        if tier == "studio" and cfg.enable_byo:
             if creds and creds.get("modal_app_url"):
                 modal_line = "**Modal connected:** ✅ Yes"
             else:

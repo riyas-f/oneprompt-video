@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Optional, List
 from concurrent.futures import ThreadPoolExecutor
 import base64
+import os
 import re as _re
 import shutil
 import tempfile
@@ -590,10 +591,25 @@ class VideoGenerator:
     memory=2048,
     timeout=25 * 60,
     scaledown_window=120,
+    secrets=[modal.Secret.from_name("oneprompt-render-auth")],
 )
 @modal.wsgi_app()
 def flask_app():
     web_app = Flask(__name__)
+
+    def _authorized() -> bool:
+        """Shared-secret check for the bot-only async API. If the secret env
+        is unset the check is a no-op (legacy sync endpoint stays open until
+        n8n is decommissioned)."""
+        key = os.environ.get("RENDER_API_KEY", "")
+        if not key:
+            return True
+        supplied = request.headers.get("X-OnePrompt-Key", "")
+        return hmac_compare(supplied, key)
+
+    def hmac_compare(a: str, b: str) -> bool:
+        import hmac as _hmac
+        return _hmac.compare_digest(a.encode(), b.encode())
 
     def _parse_payload():
         """Shared request validation. Returns (params_dict, None) or (None, flask_error)."""
@@ -678,6 +694,8 @@ def flask_app():
     # ─── Async job API (used by the OnePrompt bot's internal pipeline) ───────
     @web_app.route("/generate-video-async", methods=["POST"])
     def generate_video_async():
+        if not _authorized():
+            return jsonify({"error": "unauthorized"}), 401
         try:
             p, err = _parse_payload()
             if err:
@@ -709,6 +727,8 @@ def flask_app():
 
     @web_app.route("/job/<job_key>/status")
     def job_status(job_key: str):
+        if not _authorized():
+            return jsonify({"error": "unauthorized"}), 401
         if not _valid_job_key(job_key):
             return jsonify({"error": "bad job_key"}), 400
         try:
@@ -721,6 +741,8 @@ def flask_app():
 
     @web_app.route("/job/<job_key>/result")
     def job_result(job_key: str):
+        if not _authorized():
+            return jsonify({"error": "unauthorized"}), 401
         if not _valid_job_key(job_key):
             return jsonify({"error": "bad job_key"}), 400
         try:
@@ -739,6 +761,8 @@ def flask_app():
 
     @web_app.route("/job/<job_key>", methods=["DELETE"])
     def job_cleanup(job_key: str):
+        if not _authorized():
+            return jsonify({"error": "unauthorized"}), 401
         if not _valid_job_key(job_key):
             return jsonify({"error": "bad job_key"}), 400
         try:

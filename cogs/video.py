@@ -147,9 +147,9 @@ class CreateForm(discord.ui.Modal, title="Generate a video"):
                 f"{remaining} left — `/subscribe` for unlimited.*"
             )
         elif self._meter == "period":
-            used = await db.increment_period_usage(interaction.user.id)
+            used = await db.increment_period_usage(interaction.user.id, self._duration)
             label = "Trial" if self._trialing else "Plan"
-            free_note = f"\n\n*{label}: {used}/{self._quota} videos this period.*"
+            free_note = f"\n\n*{label}: {used}/{self._quota} render-minutes used this period.*"
 
         await interaction.response.send_message(
             embed=embeds.processing(
@@ -183,60 +183,38 @@ class VideoCog(commands.Cog):
         free_used = int((user or {}).get("free_attempts_used", 0) or 0)
 
         is_trialing = bool((user or {}).get("is_trialing"))
+        duration_min = duration.value if duration else DEFAULT_DURATION
         quota = 0
         trialing_flag = False
 
-        if is_pro and tier == "studio":
-            creds = await db.get_modal_credentials(interaction.user.id)
-            if not creds or not creds.get("modal_app_url"):
-                await interaction.response.send_message(
-                    embed=embeds.error(
-                        "Modal not connected",
-                        "You're on **Studio** — please connect your Modal account "
-                        "with `/setmodal` to start generating.",
-                    ),
-                    ephemeral=True,
+        if is_pro:
+            # Paid tiers are both hosted, metered in render-minutes.
+            if tier == "studio":
+                quota = cfg.studio_monthly_minutes
+                cap_msg = "For higher volume, ask `/support` about **Enterprise**."
+            elif is_trialing:
+                quota = cfg.trial_minutes
+                cap_msg = (
+                    "Your trial converts automatically — once it does, you'll get "
+                    f"**{cfg.pro_monthly_minutes} render-minutes / month**."
                 )
-                return
+            else:
+                quota = cfg.pro_monthly_minutes
+                cap_msg = (
+                    f"Need more? **Studio** ($79/mo) includes "
+                    f"{cfg.studio_monthly_minutes} render-minutes / month."
+                )
             used = await db.get_or_reset_period_usage(interaction.user.id)
-            if used >= cfg.studio_monthly_quota:
+            if used + duration_min > quota:
                 reset = (user or {}).get("quota_reset_at")
                 when = f" Resets <t:{int(reset.timestamp())}:R>." if reset else ""
+                remaining = max(0, quota - used)
                 await interaction.response.send_message(
                     embed=embeds.error(
-                        "Monthly quota reached",
-                        f"You've used all **{cfg.studio_monthly_quota}** Studio videos "
-                        f"for this period.{when}\n\nFor higher volume, contact `/support` "
-                        "about Enterprise pricing.",
+                        "Not enough render-minutes",
+                        f"This video needs **{duration_min} min** but you have "
+                        f"**{remaining} of {quota}** left this period.{when}\n\n{cap_msg}",
                     ),
-                    ephemeral=True,
-                )
-                return
-            modal_url = creds["modal_app_url"]
-            meter = "period"
-            quota = cfg.studio_monthly_quota
-
-        elif is_pro and tier == "pro":
-            # Hosted Pro: tighter cap during trial than the paid period.
-            effective_quota = cfg.trial_quota if is_trialing else cfg.pro_monthly_quota
-            used = await db.get_or_reset_period_usage(interaction.user.id)
-            if used >= effective_quota:
-                reset = (user or {}).get("quota_reset_at")
-                when = f" Resets <t:{int(reset.timestamp())}:R>." if reset else ""
-                if is_trialing:
-                    msg = (
-                        f"You've used all **{cfg.trial_quota}** trial videos. "
-                        "Your trial converts automatically — once it does, you'll get "
-                        f"**{cfg.pro_monthly_quota} videos / month**."
-                    )
-                else:
-                    msg = (
-                        f"You've used all **{cfg.pro_monthly_quota}** videos for this period.{when}\n\n"
-                        "Need more? Upgrade to **Studio** ($79/mo) for "
-                        f"{cfg.studio_monthly_quota} videos / month with your own Modal account."
-                    )
-                await interaction.response.send_message(
-                    embed=embeds.error("Quota reached", msg),
                     ephemeral=True,
                 )
                 return
@@ -245,18 +223,28 @@ class VideoCog(commands.Cog):
                 await interaction.response.send_message(
                     embed=embeds.error(
                         "Service busy",
-                        "We've hit today's hosted-Modal capacity. Please try again "
-                        "in a few hours, or upgrade to Studio for your own Modal compute.",
+                        "We've hit today's rendering capacity. Please try again "
+                        "in a few hours.",
                     ),
                     ephemeral=True,
                 )
                 return
             modal_url = cfg.admin_modal_url
             meter = "period"
-            quota = effective_quota
             trialing_flag = is_trialing
 
         elif free_used < cfg.free_generations:
+            if duration_min > 2:
+                await interaction.response.send_message(
+                    embed=embeds.error(
+                        "Free previews are up to 2 minutes",
+                        "Pick `duration: 1 minute` or `2 minutes` for your free videos — "
+                        f"or `/subscribe` for up to 5 minutes and "
+                        f"{cfg.pro_monthly_minutes} render-minutes a month.",
+                    ),
+                    ephemeral=True,
+                )
+                return
             if await db.count_hosted_videos_today() >= cfg.max_hosted_videos_per_day:
                 await interaction.response.send_message(
                     embed=embeds.error(
@@ -274,9 +262,9 @@ class VideoCog(commands.Cog):
                 embed=embeds.error(
                     "Free previews used",
                     f"You've used your {cfg.free_generations} free videos. "
-                    f"Run **`/subscribe`** to pick a plan — Pro ${cfg.price_usd}/mo "
-                    f"({cfg.pro_monthly_quota} videos/mo, hosted) or Studio $79/mo "
-                    f"({cfg.studio_monthly_quota} videos/mo, BYO Modal).",
+                    f"Run **`/subscribe`** — Pro ${cfg.price_usd}/mo "
+                    f"({cfg.pro_monthly_minutes} render-min/mo) or Studio $79/mo "
+                    f"({cfg.studio_monthly_minutes} render-min/mo). Both fully hosted.",
                 ),
                 ephemeral=True,
             )

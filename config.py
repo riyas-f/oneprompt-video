@@ -28,10 +28,13 @@ class Config:
     polar_api_base: str
     polar_success_url: str
     polar_trial_days: int
-    pro_monthly_quota: int
-    studio_monthly_quota: int
-    trial_quota: int
+    # Quotas are RENDER-MINUTES per billing period (a 3-min video spends 3).
+    pro_monthly_minutes: int
+    studio_monthly_minutes: int
+    trial_minutes: int
     max_hosted_videos_per_day: int
+    # BYO Modal (/setmodal) is Enterprise-only now; hidden unless enabled.
+    enable_byo: bool
 
     encryption_key: str
 
@@ -56,6 +59,8 @@ class Config:
     r2_public_base_url: str
     job_timeout_minutes: int
     pipeline_max_concurrent: int
+    # Shared secret between bot and the Modal render app (async endpoints).
+    render_api_key: str
 
     support_user_id: int
 
@@ -77,10 +82,11 @@ def load() -> Config:
         polar_api_base=os.getenv("POLAR_API_BASE", "https://api.polar.sh"),
         polar_success_url=os.getenv("POLAR_SUCCESS_URL", ""),
         polar_trial_days=int(os.getenv("POLAR_TRIAL_DAYS", "7")),
-        pro_monthly_quota=int(os.getenv("PRO_MONTHLY_QUOTA", "20")),
-        studio_monthly_quota=int(os.getenv("STUDIO_MONTHLY_QUOTA", "100")),
-        trial_quota=int(os.getenv("TRIAL_QUOTA", "5")),
+        pro_monthly_minutes=int(os.getenv("PRO_MONTHLY_MINUTES", "60")),
+        studio_monthly_minutes=int(os.getenv("STUDIO_MONTHLY_MINUTES", "200")),
+        trial_minutes=int(os.getenv("TRIAL_MINUTES", "10")),
         max_hosted_videos_per_day=int(os.getenv("MAX_HOSTED_VIDEOS_PER_DAY", "200")),
+        enable_byo=os.getenv("ENABLE_BYO", "false").strip().lower() in ("1", "true", "yes"),
         encryption_key=_req("ENCRYPTION_KEY"),
         modal_app_path=os.getenv("MODAL_APP_PATH", "./modal_app/app.py"),
         modal_graphql_url=os.getenv("MODAL_GRAPHQL_URL", "https://api.modal.com/graphql"),
@@ -92,7 +98,7 @@ def load() -> Config:
         pipeline=os.getenv("PIPELINE", "n8n").strip().lower(),
         openrouter_api_key=os.getenv("OPENROUTER_API_KEY", ""),
         openrouter_base=os.getenv("OPENROUTER_BASE", "https://openrouter.ai/api/v1"),
-        openrouter_model=os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-5"),
+        openrouter_model=os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4.5"),
         r2_endpoint=os.getenv("R2_ENDPOINT", ""),
         r2_access_key_id=os.getenv("R2_ACCESS_KEY_ID", ""),
         r2_secret_access_key=os.getenv("R2_SECRET_ACCESS_KEY", ""),
@@ -100,6 +106,7 @@ def load() -> Config:
         r2_public_base_url=os.getenv("R2_PUBLIC_BASE_URL", ""),
         job_timeout_minutes=int(os.getenv("JOB_TIMEOUT_MINUTES", "45")),
         pipeline_max_concurrent=int(os.getenv("PIPELINE_MAX_CONCURRENT", "4")),
+        render_api_key=os.getenv("RENDER_API_KEY", ""),
         support_user_id=int(_req("SUPPORT_DISCORD_USER_ID")),
         webhook_host=os.getenv("WEBHOOK_HOST", "0.0.0.0"),
         webhook_port=int(os.getenv("WEBHOOK_PORT", "8080")),

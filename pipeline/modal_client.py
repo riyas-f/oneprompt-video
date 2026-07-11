@@ -10,7 +10,13 @@ import logging
 
 import httpx
 
+from config import cfg
+
 log = logging.getLogger(__name__)
+
+
+def _auth_headers() -> dict:
+    return {"X-OnePrompt-Key": cfg.render_api_key} if cfg.render_api_key else {}
 
 _SHORT = httpx.Timeout(30.0)
 # Sync fallback holds the connection for the whole render.
@@ -43,7 +49,8 @@ class ModalClient:
             "characters": characters or None,
         }
         async with httpx.AsyncClient(timeout=_SHORT) as c:
-            r = await c.post(f"{self.base}/generate-video-async", json=payload)
+            r = await c.post(f"{self.base}/generate-video-async", json=payload,
+                             headers=_auth_headers())
             if r.status_code in (404, 405):
                 log.info("Modal app at %s lacks async API — using sync fallback", self.base)
                 return "sync"
@@ -53,7 +60,7 @@ class ModalClient:
     async def status(self, job_key: str) -> dict:
         """{status: queued|running|done|failed|unknown, scene?, total?, error?}"""
         async with httpx.AsyncClient(timeout=_SHORT) as c:
-            r = await c.get(f"{self.base}/job/{job_key}/status")
+            r = await c.get(f"{self.base}/job/{job_key}/status", headers=_auth_headers())
             if r.status_code == 404:
                 return {"status": "unknown"}
             r.raise_for_status()
@@ -61,14 +68,14 @@ class ModalClient:
 
     async def fetch_result(self, job_key: str) -> bytes:
         async with httpx.AsyncClient(timeout=_RESULT) as c:
-            r = await c.get(f"{self.base}/job/{job_key}/result")
+            r = await c.get(f"{self.base}/job/{job_key}/result", headers=_auth_headers())
             r.raise_for_status()
             return r.content
 
     async def cleanup(self, job_key: str) -> None:
         try:
             async with httpx.AsyncClient(timeout=_SHORT) as c:
-                await c.delete(f"{self.base}/job/{job_key}")
+                await c.delete(f"{self.base}/job/{job_key}", headers=_auth_headers())
         except httpx.HTTPError:
             log.warning("Modal job cleanup failed for %s (non-fatal)", job_key)
 
