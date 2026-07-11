@@ -125,7 +125,7 @@ async def _run_job(
             characters = assembly.sheet_prompts(script.get("characters") or {}, style)
             await db.save_job_artifacts(job_id, {
                 "modal_url": modal_url, "voice": voice, "scenes": scenes,
-                "characters": characters,
+                "characters": characters, "duration": duration_minutes,
             })
 
             # ── render ────────────────────────────────────────────────────
@@ -241,13 +241,39 @@ async def _fail(discord_id: int, job_id: int, error: str, progress_msg) -> None:
     row = await db.fail_job(job_id, error[:500])
     if row is None:
         return  # already terminal (e.g. sweep got there first)
+    try:
+        await _refund_for_failed_job(discord_id, row)
+    except Exception:
+        log.exception("Refund failed for job %s", job_id)
     embed = embeds.error(
         "Video generation failed",
-        "Something went wrong on our side — you haven't lost anything.\n\n"
+        "Something went wrong on our side — **your credit has been returned**, "
+        "nothing was used up.\n\n"
         "Try `/create` again, or `/support` if it keeps happening.",
     )
     if not await _edit(progress_msg, embed):
         await _dm(discord_id, embed)
+
+
+async def _refund_for_failed_job(discord_id: int, row: dict) -> None:
+    """Give back whatever the failed job consumed (a free credit or minutes).
+    fail_job is idempotent, so this runs at most once per job."""
+    user = await db.get_user(discord_id)
+    if not user:
+        return
+    if user.get("subscription_status") == "pro":
+        art = row.get("artifacts")
+        if isinstance(art, str):
+            import json
+            try:
+                art = json.loads(art)
+            except json.JSONDecodeError:
+                art = None
+        minutes = (art or {}).get("duration") if isinstance(art, dict) else None
+        if minutes:
+            await db.refund_minutes(discord_id, int(minutes))
+    else:
+        await db.refund_free_attempt(discord_id)
 
 
 # ─── background: resume + sweep ───────────────────────────────────────────────

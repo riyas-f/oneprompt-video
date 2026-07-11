@@ -53,6 +53,44 @@ class SupportCog(commands.Cog):
     async def support(self, interaction: discord.Interaction):
         await interaction.response.send_modal(SupportForm())
 
+    @app_commands.command(name="reply", description="(Team only) Send a user a message via the bot")
+    @app_commands.describe(user_id="The user's Discord ID (shown in their /support message)",
+                           message="What to send them")
+    async def reply(self, interaction: discord.Interaction, user_id: str, message: str):
+        if interaction.user.id != cfg.support_user_id:
+            await interaction.response.send_message(
+                embed=embeds.error("Not authorized", "This command is for the OnePrompt team."),
+                ephemeral=True,
+            )
+            return
+        try:
+            uid = int(user_id.strip())
+        except ValueError:
+            await interaction.response.send_message(
+                embed=embeds.error("Bad user ID", "Pass the numeric Discord user ID."),
+                ephemeral=True,
+            )
+            return
+        try:
+            target = await self.bot.fetch_user(uid)
+            await target.send(embed=embeds.info("📬 A message from OnePrompt support", message))
+        except discord.NotFound:
+            await interaction.response.send_message(
+                embed=embeds.error("Unknown user", f"No Discord user with ID `{uid}`."),
+                ephemeral=True,
+            )
+            return
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                embed=embeds.error("Could not deliver", "That user has DMs disabled."),
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message(
+            embed=embeds.success("Delivered", f"Your message was sent to `{uid}`."),
+            ephemeral=True,
+        )
+
     @app_commands.command(name="status", description="Your subscription and current job")
     async def status(self, interaction: discord.Interaction):
         user = await db.get_user(interaction.user.id)

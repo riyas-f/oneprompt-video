@@ -86,6 +86,30 @@ async def set_tier(discord_id: int, tier: str, quota_reset_at, is_trialing: bool
         )
 
 
+async def refund_free_attempt(discord_id: int) -> None:
+    """Give back one free credit (floor 0) — used when a free-tier job fails."""
+    async with pool().acquire() as c:
+        await c.execute(
+            """
+            UPDATE users SET free_attempts_used = GREATEST(free_attempts_used - 1, 0)
+            WHERE discord_id = $1
+            """,
+            discord_id,
+        )
+
+
+async def refund_minutes(discord_id: int, minutes: int) -> None:
+    """Give back render-minutes (floor 0) — used when a paid-tier job fails."""
+    async with pool().acquire() as c:
+        await c.execute(
+            """
+            UPDATE users SET minutes_used_period = GREATEST(minutes_used_period - $2, 0)
+            WHERE discord_id = $1
+            """,
+            discord_id, minutes,
+        )
+
+
 async def increment_free_attempt(discord_id: int) -> int:
     """Atomically bump the free-tier counter; returns the new value."""
     async with pool().acquire() as c:
