@@ -92,7 +92,7 @@ def load() -> Config:
         pipeline=os.getenv("PIPELINE", "n8n").strip().lower(),
         openrouter_api_key=os.getenv("OPENROUTER_API_KEY", ""),
         openrouter_base=os.getenv("OPENROUTER_BASE", "https://openrouter.ai/api/v1"),
-        openrouter_model=os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4.5"),
+        openrouter_model=os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-5"),
         r2_endpoint=os.getenv("R2_ENDPOINT", ""),
         r2_access_key_id=os.getenv("R2_ACCESS_KEY_ID", ""),
         r2_secret_access_key=os.getenv("R2_SECRET_ACCESS_KEY", ""),
