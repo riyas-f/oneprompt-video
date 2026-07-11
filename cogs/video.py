@@ -61,19 +61,32 @@ class CreateForm(discord.ui.Modal, title="Generate a video"):
         style_obj = get_style_object(prefs.get("style_preset_key"), prefs.get("style_custom"))
 
         try:
-            resp = await request_video(
-                content=topic,
-                modal_url=self._modal_url,
-                extra_context=extra,
-                discord_id=interaction.user.id,
-                job_id=job_id,
-                style=style_obj,
-                style_key=prefs.get("style_preset_key"),
-                voice=prefs.get("voice") or "af_heart",
-            )
-            api_job_id = resp.get("api_job_id")
-            if api_job_id:
-                await db.set_job_api_id(job_id, str(api_job_id))
+            if cfg.pipeline == "internal":
+                from pipeline import runner
+                await runner.submit(
+                    discord_id=interaction.user.id,
+                    job_id=job_id,
+                    topic=topic,
+                    extra_context=extra,
+                    style=style_obj,
+                    style_key=prefs.get("style_preset_key"),
+                    voice=prefs.get("voice") or "af_heart",
+                    modal_url=self._modal_url,
+                )
+            else:
+                resp = await request_video(
+                    content=topic,
+                    modal_url=self._modal_url,
+                    extra_context=extra,
+                    discord_id=interaction.user.id,
+                    job_id=job_id,
+                    style=style_obj,
+                    style_key=prefs.get("style_preset_key"),
+                    voice=prefs.get("voice") or "af_heart",
+                )
+                api_job_id = resp.get("api_job_id")
+                if api_job_id:
+                    await db.set_job_api_id(job_id, str(api_job_id))
         except Exception as ex:
             log.exception("video API call failed")
             await db.fail_job(job_id, f"API call failed: {ex}")

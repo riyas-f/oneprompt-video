@@ -25,8 +25,11 @@ from pathlib import Path
 from typing import Optional, List
 from concurrent.futures import ThreadPoolExecutor
 import base64
+import re as _re
+import shutil
 import tempfile
 import threading
+import time
 
 import modal
 
@@ -56,13 +59,32 @@ image = (
 
 MODEL_NAME = "Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32"
 
+# NB: keep these as POSIX strings — str(Path("/cache")) is "\cache" when
+# deploying from Windows, which corrupts the image definition.
 CACHE_DIR = Path("/cache")
 cache_volume = modal.Volume.from_name("hf-hub-cache", create_if_missing=True)
-volumes = {CACHE_DIR: cache_volume}
+volumes = {"/cache": cache_volume}
 
-image = image.env({"HF_HOME": str(CACHE_DIR)})
+image = image.env({"HF_HOME": "/cache"})
 
 app = modal.App("explainer-videos")
+
+# Cross-container job progress: job_key -> {stage, scene, total, error, updated_at}.
+# Written by the GPU worker, read by the flask status endpoint.
+progress_dict = modal.Dict.from_name("oneprompt-job-progress", create_if_missing=True)
+
+JOBS_DIR = CACHE_DIR / "jobs"
+_JOB_KEY_RE = r"[A-Za-z0-9_\-]{1,64}"
+
+
+def _report_progress(job_key: Optional[str], **fields) -> None:
+    """Best-effort progress write; never lets telemetry break a render."""
+    if not job_key:
+        return
+    try:
+        progress_dict[job_key] = {"updated_at": time.time(), **fields}
+    except Exception:
+        pass
 
 with image.imports():
     import torch
@@ -117,6 +139,8 @@ class VideoGenerator:
         # these protect against any future change to concurrency settings.
         self._pipe_lock = threading.Lock()
         self._tts_lock = threading.Lock()
+        # Volume commits happen from the ffmpeg thread pool; serialize them.
+        self._commit_lock = threading.Lock()
 
         print("✓ Container ready (image + TTS both loaded)")
 
@@ -166,13 +190,16 @@ class VideoGenerator:
         sf.write(buf, np.concatenate(segs), 24000, format="WAV")
         return buf.getvalue()
 
-    @staticmethod
-    def _make_clip(idx: int, image_bytes: bytes, audio_bytes: bytes,
-                   target_w: int, target_h: int, temp_path: Path) -> str:
-        """Encode one image+audio pair into an mp4 clip. CPU-bound; safe to run in a thread pool."""
+    def _make_clip(self, idx: int, image_bytes: bytes, audio_bytes: bytes,
+                   target_w: int, target_h: int, temp_path: Path,
+                   out_dir: Optional[Path] = None) -> str:
+        """Encode one image+audio pair into an mp4 clip. CPU-bound; safe to run in a thread pool.
+
+        When out_dir points at the volume (checkpointing on), the finished clip
+        is written there and committed, so a retried run can skip this scene."""
         ipath = temp_path / f"scene_{idx}.png"
         apath = temp_path / f"scene_{idx}.wav"
-        cpath = temp_path / f"scene_{idx}.mp4"
+        cpath = (out_dir or temp_path) / f"scene_{idx}.mp4"
         ipath.write_bytes(image_bytes)
         apath.write_bytes(audio_bytes)
 
@@ -203,6 +230,9 @@ class VideoGenerator:
             .overwrite_output()
             .run(quiet=True)
         )
+        if out_dir is not None:
+            with self._commit_lock:
+                cache_volume.commit()
         return str(cpath)
 
     # ───── public entrypoint ──────────────────────────────────────────────────
@@ -214,6 +244,7 @@ class VideoGenerator:
         tts_speed: float = 1.0,
         image_width: int = 1920,
         image_height: int = 1080,
+        job_key: Optional[str] = None,
     ) -> bytes:
         """
         Pipelined generation.
@@ -221,7 +252,29 @@ class VideoGenerator:
             main thread        : image gen on GPU (sequential, the bottleneck)
             ffmpeg thread pool : per-clip encode (3 workers, parallel)
             final concat       : stream-copy (instant)
+
+        With a job_key (async path): per-scene clips are checkpointed to the
+        volume so a retried/preempted run resumes instead of restarting, the
+        final mp4 is left at /cache/jobs/{job_key}/final.mp4 for the status
+        server to serve, and progress is reported to progress_dict.
         """
+        try:
+            return self._generate_video_impl(
+                scenes, voice, tts_speed, image_width, image_height, job_key
+            )
+        except Exception as e:
+            _report_progress(job_key, stage="failed", error=str(e)[:500])
+            raise
+
+    def _generate_video_impl(
+        self,
+        scenes: List[dict],
+        voice: str,
+        tts_speed: float,
+        image_width: int,
+        image_height: int,
+        job_key: Optional[str],
+    ) -> bytes:
         valid = [(i, s) for i, s in enumerate(scenes)
                  if s.get("narration") and s.get("image_prompt")]
         if not valid:
@@ -230,15 +283,34 @@ class VideoGenerator:
         N = len(valid)
         print(f"→ Generating {N} scenes ({image_width}x{image_height})")
 
+        # Checkpoint dir on the volume (async path only).
+        job_dir: Optional[Path] = None
+        done_clips: set = set()
+        if job_key:
+            try:
+                cache_volume.reload()
+            except Exception:
+                pass
+            job_dir = JOBS_DIR / job_key
+            job_dir.mkdir(parents=True, exist_ok=True)
+            done_clips = {
+                i for i, _ in valid if (job_dir / f"scene_{i}.mp4").exists()
+            }
+            if done_clips:
+                print(f"→ Resuming: {len(done_clips)}/{N} clips already checkpointed")
+
+        todo = [(i, s) for i, s in valid if i not in done_clips]
+        _report_progress(job_key, stage="rendering", scene=len(done_clips), total=N)
+
         with tempfile.TemporaryDirectory() as td:
             tp = Path(td)
 
-            # --- TTS background worker ---------------------------------------
+            # --- TTS background worker (only scenes still to render) ---------
             audio_results: dict = {}
-            audio_events = {i: threading.Event() for i, _ in valid}
+            audio_events = {i: threading.Event() for i, _ in todo}
 
             def tts_worker():
-                for i, scene in valid:
+                for i, scene in todo:
                     try:
                         audio_results[i] = self._generate_audio(
                             scene["narration"], voice=voice, speed=tts_speed
@@ -255,7 +327,7 @@ class VideoGenerator:
             with ThreadPoolExecutor(max_workers=3) as ffmpeg_pool:
                 clip_futures: dict = {}
 
-                for i, scene in valid:
+                for n, (i, scene) in enumerate(todo):
                     print(f"  [{i + 1}/{N}] image…")
                     image_bytes = self._generate_image(
                         scene["image_prompt"], image_width, image_height
@@ -272,17 +344,25 @@ class VideoGenerator:
                     print(f"  [{i + 1}/{N}] queueing ffmpeg encode…")
                     clip_futures[i] = ffmpeg_pool.submit(
                         self._make_clip, i, image_bytes, aud,
-                        image_width, image_height, tp,
+                        image_width, image_height, tp, job_dir,
+                    )
+                    _report_progress(
+                        job_key, stage="rendering",
+                        scene=len(done_clips) + n + 1, total=N,
                     )
 
                 tts_thread.join()
                 # Block until all per-clip encodes finish.
-                clip_paths = [clip_futures[i].result() for i, _ in valid]
+                for i, _ in todo:
+                    clip_futures[i].result()
+
+            # All clips now exist — in job_dir (async) or tp (sync legacy).
+            clip_dir = job_dir or tp
+            clip_paths = [str(clip_dir / f"scene_{i}.mp4") for i, _ in valid]
 
             # --- Final concat: stream-copy, no re-encode --------------------
-            final_path = tp / "final.mp4"
+            final_path = (job_dir or tp) / "final.mp4"
             if len(clip_paths) == 1:
-                import shutil
                 shutil.copy(clip_paths[0], final_path)
             else:
                 concat_file = tp / "concat.txt"
@@ -297,6 +377,19 @@ class VideoGenerator:
                 )
 
             video_bytes = final_path.read_bytes()
+
+            if job_dir is not None:
+                # Keep final.mp4 for the result endpoint; scene clips are done.
+                for i, _ in valid:
+                    try:
+                        (job_dir / f"scene_{i}.mp4").unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                with self._commit_lock:
+                    cache_volume.commit()
+
+            _report_progress(job_key, stage="done", scene=N, total=N,
+                             size_bytes=len(video_bytes))
             print(f"✓ Done: {len(video_bytes) / (1024 * 1024):.1f} MB")
             return video_bytes
 
@@ -314,6 +407,35 @@ class VideoGenerator:
 def flask_app():
     web_app = Flask(__name__)
 
+    def _parse_payload():
+        """Shared request validation. Returns (params_dict, None) or (None, flask_error)."""
+        data = request.get_json(force=True)
+        first = data[0] if isinstance(data, list) and data else data
+        if first is None or first == []:
+            return None, (jsonify({"error": "Empty input"}), 400)
+
+        scenes = first.get("scenes", [])
+        if not scenes:
+            return None, (jsonify({"error": "'scenes' array is required"}), 400)
+        for i, s in enumerate(scenes):
+            if not s.get("narration"):
+                return None, (jsonify({"error": f"Scene {i + 1} missing 'narration'"}), 400)
+            if not s.get("image_prompt"):
+                return None, (jsonify({"error": f"Scene {i + 1} missing 'image_prompt'"}), 400)
+
+        return {
+            "scenes": scenes,
+            "voice": first.get("voice", "af_heart"),
+            "tts_speed": first.get("tts_speed", 1.0),
+            "image_width": first.get("image_width", 1920),
+            "image_height": first.get("image_height", 1080),
+            "return_b64": first.get("return_base64", False),
+            "job_key": str(first.get("job_key") or "").strip(),
+        }, None
+
+    def _valid_job_key(job_key: str) -> bool:
+        return bool(_re.fullmatch(_JOB_KEY_RE, job_key))
+
     @web_app.route("/")
     def health():
         return jsonify({"status": "alive"})
@@ -321,26 +443,13 @@ def flask_app():
     @web_app.route("/generate-video", methods=["POST"])
     def generate_video():
         try:
-            data = request.get_json(force=True)
-            first = data[0] if isinstance(data, list) and data else data
-            if first is None or first == []:
-                return jsonify({"error": "Empty input"}), 400
-
-            scenes = first.get("scenes", [])
-            voice = first.get("voice", "af_heart")
-            tts_speed = first.get("tts_speed", 1.0)
-            image_width = first.get("image_width", 1920)
-            image_height = first.get("image_height", 1080)
-            return_b64 = first.get("return_base64", False)
-
-            if not scenes:
-                return jsonify({"error": "'scenes' array is required"}), 400
-
-            for i, s in enumerate(scenes):
-                if not s.get("narration"):
-                    return jsonify({"error": f"Scene {i + 1} missing 'narration'"}), 400
-                if not s.get("image_prompt"):
-                    return jsonify({"error": f"Scene {i + 1} missing 'image_prompt'"}), 400
+            p, err = _parse_payload()
+            if err:
+                return err
+            scenes = p["scenes"]
+            voice, tts_speed = p["voice"], p["tts_speed"]
+            image_width, image_height = p["image_width"], p["image_height"]
+            return_b64 = p["return_b64"]
 
             print(f"→ Request: {len(scenes)} scenes | "
                   f"voice={voice} | {image_width}x{image_height}")
@@ -371,5 +480,94 @@ def flask_app():
             import traceback
             print(f"Error: {e}\n{traceback.format_exc()}")
             return jsonify({"error": str(e)}), 500
+
+    # ─── Async job API (used by the OnePrompt bot's internal pipeline) ───────
+    @web_app.route("/generate-video-async", methods=["POST"])
+    def generate_video_async():
+        try:
+            p, err = _parse_payload()
+            if err:
+                return err
+            job_key = p["job_key"]
+            if not _valid_job_key(job_key):
+                return jsonify({"error": "'job_key' is required ([A-Za-z0-9_-], max 64)"}), 400
+
+            # Mark queued BEFORE spawning so a fast poll never sees 404.
+            progress_dict[job_key] = {"stage": "queued", "updated_at": time.time()}
+
+            call = VideoGenerator().generate_video.spawn(
+                scenes=p["scenes"],
+                voice=p["voice"],
+                tts_speed=p["tts_speed"],
+                image_width=p["image_width"],
+                image_height=p["image_height"],
+                job_key=job_key,
+            )
+            print(f"→ Async job {job_key}: {len(p['scenes'])} scenes spawned "
+                  f"(call {call.object_id})")
+            return jsonify({"job_key": job_key, "call_id": call.object_id}), 202
+
+        except Exception as e:
+            import traceback
+            print(f"Error: {e}\n{traceback.format_exc()}")
+            return jsonify({"error": str(e)}), 500
+
+    @web_app.route("/job/<job_key>/status")
+    def job_status(job_key: str):
+        if not _valid_job_key(job_key):
+            return jsonify({"error": "bad job_key"}), 400
+        try:
+            rec = dict(progress_dict[job_key])
+        except KeyError:
+            return jsonify({"status": "unknown"}), 404
+        stage = rec.get("stage", "queued")
+        status = "done" if stage == "done" else "failed" if stage == "failed" else "running"
+        return jsonify({"status": status, **rec})
+
+    @web_app.route("/job/<job_key>/result")
+    def job_result(job_key: str):
+        if not _valid_job_key(job_key):
+            return jsonify({"error": "bad job_key"}), 400
+        try:
+            cache_volume.reload()
+        except Exception:
+            pass
+        path = JOBS_DIR / job_key / "final.mp4"
+        if not path.exists():
+            return jsonify({"error": "result not ready"}), 404
+        return send_file(
+            BytesIO(path.read_bytes()),
+            mimetype="video/mp4",
+            as_attachment=True,
+            download_name=f"{job_key}.mp4",
+        )
+
+    @web_app.route("/job/<job_key>", methods=["DELETE"])
+    def job_cleanup(job_key: str):
+        if not _valid_job_key(job_key):
+            return jsonify({"error": "bad job_key"}), 400
+        try:
+            cache_volume.reload()
+        except Exception:
+            pass
+        shutil.rmtree(JOBS_DIR / job_key, ignore_errors=True)
+        # Opportunistic GC: drop job dirs older than 48h whose caller vanished.
+        try:
+            cutoff = time.time() - 48 * 3600
+            if JOBS_DIR.exists():
+                for d in JOBS_DIR.iterdir():
+                    if d.is_dir() and d.stat().st_mtime < cutoff:
+                        shutil.rmtree(d, ignore_errors=True)
+        except Exception:
+            pass
+        try:
+            cache_volume.commit()
+        except Exception:
+            pass
+        try:
+            del progress_dict[job_key]
+        except KeyError:
+            pass
+        return jsonify({"ok": True})
 
     return web_app

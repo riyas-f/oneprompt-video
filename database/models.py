@@ -270,6 +270,71 @@ async def fail_job(job_id: int, error: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
+async def set_job_stage(job_id: int, stage: str) -> None:
+    async with pool().acquire() as c:
+        await c.execute(
+            "UPDATE video_jobs SET stage = $2 WHERE id = $1",
+            job_id, stage,
+        )
+
+
+async def save_job_artifacts(job_id: int, artifacts: dict) -> None:
+    import json
+    async with pool().acquire() as c:
+        await c.execute(
+            "UPDATE video_jobs SET artifacts = $2::jsonb WHERE id = $1",
+            job_id, json.dumps(artifacts),
+        )
+
+
+async def resumable_jobs() -> list[dict]:
+    """Internal-pipeline jobs that were mid-render when the bot last stopped."""
+    import json
+    async with pool().acquire() as c:
+        rows = await c.fetch(
+            """
+            SELECT * FROM video_jobs
+             WHERE status = 'processing' AND stage IN ('rendering', 'uploading')
+            """
+        )
+    out = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("artifacts"), str):
+            try:
+                d["artifacts"] = json.loads(d["artifacts"])
+            except json.JSONDecodeError:
+                d["artifacts"] = None
+        out.append(d)
+    return out
+
+
+async def orphaned_pipeline_jobs() -> list[dict]:
+    """Internal-pipeline jobs that died before rendering started (not resumable)."""
+    async with pool().acquire() as c:
+        rows = await c.fetch(
+            """
+            SELECT * FROM video_jobs
+             WHERE status = 'processing' AND stage = 'script'
+            """
+        )
+        return [dict(r) for r in rows]
+
+
+async def stale_processing_jobs(older_than_minutes: int) -> list[dict]:
+    """Any processing job (either pipeline) that has exceeded the hard timeout."""
+    async with pool().acquire() as c:
+        rows = await c.fetch(
+            """
+            SELECT * FROM video_jobs
+             WHERE status = 'processing'
+               AND started_at < NOW() - ($1 * INTERVAL '1 minute')
+            """,
+            older_than_minutes,
+        )
+        return [dict(r) for r in rows]
+
+
 async def get_job(job_id: int) -> Optional[dict]:
     async with pool().acquire() as c:
         row = await c.fetchrow("SELECT * FROM video_jobs WHERE id = $1", job_id)

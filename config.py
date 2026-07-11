@@ -44,6 +44,19 @@ class Config:
     video_api_callback_secret: str
     bot_public_url: str
 
+    # Internal pipeline (PIPELINE=internal) vs legacy n8n dispatch (PIPELINE=n8n).
+    pipeline: str
+    openrouter_api_key: str
+    openrouter_base: str
+    openrouter_model: str
+    r2_endpoint: str
+    r2_access_key_id: str
+    r2_secret_access_key: str
+    r2_bucket: str
+    r2_public_base_url: str
+    job_timeout_minutes: int
+    pipeline_max_concurrent: int
+
     support_user_id: int
 
     webhook_host: str
@@ -76,6 +89,17 @@ def load() -> Config:
         video_api_url=_req("VIDEO_API_URL"),
         video_api_callback_secret=_req("VIDEO_API_CALLBACK_SECRET"),
         bot_public_url=_req("BOT_PUBLIC_URL"),
+        pipeline=os.getenv("PIPELINE", "n8n").strip().lower(),
+        openrouter_api_key=os.getenv("OPENROUTER_API_KEY", ""),
+        openrouter_base=os.getenv("OPENROUTER_BASE", "https://openrouter.ai/api/v1"),
+        openrouter_model=os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4.5"),
+        r2_endpoint=os.getenv("R2_ENDPOINT", ""),
+        r2_access_key_id=os.getenv("R2_ACCESS_KEY_ID", ""),
+        r2_secret_access_key=os.getenv("R2_SECRET_ACCESS_KEY", ""),
+        r2_bucket=os.getenv("R2_BUCKET", ""),
+        r2_public_base_url=os.getenv("R2_PUBLIC_BASE_URL", ""),
+        job_timeout_minutes=int(os.getenv("JOB_TIMEOUT_MINUTES", "45")),
+        pipeline_max_concurrent=int(os.getenv("PIPELINE_MAX_CONCURRENT", "4")),
         support_user_id=int(_req("SUPPORT_DISCORD_USER_ID")),
         webhook_host=os.getenv("WEBHOOK_HOST", "0.0.0.0"),
         webhook_port=int(os.getenv("WEBHOOK_PORT", "8080")),

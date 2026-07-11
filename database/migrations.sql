@@ -46,6 +46,12 @@ CREATE TABLE IF NOT EXISTS video_jobs (
 CREATE INDEX IF NOT EXISTS idx_video_jobs_user_status
     ON video_jobs(discord_id, status);
 
+-- Internal-pipeline state machine (NULL for jobs dispatched via the legacy n8n path).
+-- Stages: script | rendering | uploading | delivered.
+ALTER TABLE video_jobs ADD COLUMN IF NOT EXISTS stage TEXT;
+-- Stage outputs needed to resume after a restart: {modal_url, voice, scenes, ...}.
+ALTER TABLE video_jobs ADD COLUMN IF NOT EXISTS artifacts JSONB;
+
 CREATE TABLE IF NOT EXISTS pending_checkouts (
     payment_id  TEXT PRIMARY KEY,
     discord_id  BIGINT NOT NULL REFERENCES users(discord_id) ON DELETE CASCADE,

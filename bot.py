@@ -75,6 +75,10 @@ async def _run_web():
 async def main():
     await init_pool()
     await _load_cogs()
+    # Internal pipeline runner: job resume + stale-job sweep. Safe on the n8n
+    # path too (the sweep is the hard-timeout failsafe both paths need).
+    from pipeline import runner
+    runner.setup(bot)
     try:
         await asyncio.gather(
             bot.start(cfg.discord_token),

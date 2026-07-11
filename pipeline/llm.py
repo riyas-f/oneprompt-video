@@ -1,0 +1,140 @@
+"""Scene-script generation via OpenRouter. One call, validated JSON out.
+
+The prompt forbids the model from describing art style — that gets injected
+mechanically in assembly.py, so user style presets can never be overridden
+by the LLM (the bug the old n8n workflow had).
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+from pathlib import Path
+
+import httpx
+
+from config import cfg
+
+log = logging.getLogger(__name__)
+
+_PROMPT_PATH = Path(__file__).parent / "prompts" / "scene_writer.md"
+_MAX_ATTEMPTS = 3
+
+# Scene-count sanity bounds — outside these the model misread the brief.
+_MIN_SCENES = 8
+_MAX_SCENES = 60
+
+
+class ScriptError(RuntimeError):
+    """LLM failed to produce a usable script after all retries."""
+
+
+def _style_summary(style: dict) -> str:
+    parts = [
+        style.get("art_style", ""),
+        style.get("visual_style", ""),
+        f"characters: {style.get('character_design', '')}",
+        f"mood: {style.get('mood', '')}",
+    ]
+    return "; ".join(p for p in parts if p and not p.endswith(": "))
+
+
+def _build_prompt(topic: str, extra_context: str, style: dict, style_key: str | None) -> str:
+    template = _PROMPT_PATH.read_text(encoding="utf-8")
+    return (
+        template
+        .replace("<<TOPIC>>", topic.strip())
+        .replace("<<EXTRA_CONTEXT>>", (extra_context or "").strip() or "(none)")
+        .replace("<<STYLE_KEY>>", style_key or "custom")
+        .replace("<<STYLE_SUMMARY>>", _style_summary(style))
+    )
+
+
+def _extract_json(text: str) -> dict:
+    """Parse the model output into a dict, tolerating markdown fences / preamble."""
+    s = text.strip()
+    fence = re.search(r"```(?:json)?\s*(.*?)```", s, re.DOTALL)
+    if fence:
+        s = fence.group(1).strip()
+    if not s.startswith("{"):
+        start = s.find("{")
+        end = s.rfind("}")
+        if start == -1 or end <= start:
+            raise ValueError("no JSON object found in model output")
+        s = s[start:end + 1]
+    return json.loads(s)
+
+
+def _validate_scenes(payload: dict) -> list[dict]:
+    scenes = payload.get("scenes")
+    if not isinstance(scenes, list) or not scenes:
+        raise ValueError("'scenes' missing or empty")
+    if not (_MIN_SCENES <= len(scenes) <= _MAX_SCENES):
+        raise ValueError(f"implausible scene count: {len(scenes)}")
+    out = []
+    for i, s in enumerate(scenes):
+        if not isinstance(s, dict):
+            raise ValueError(f"scene {i + 1} is not an object")
+        narration = s.get("narration")
+        image_prompt = s.get("image_prompt")
+        if not isinstance(narration, str) or not narration.strip():
+            raise ValueError(f"scene {i + 1} missing narration")
+        # Defensive: if the model ignored the plain-string rule, flatten it.
+        if isinstance(image_prompt, dict):
+            image_prompt = ", ".join(str(v) for v in image_prompt.values() if v)
+        if not isinstance(image_prompt, str) or not image_prompt.strip():
+            raise ValueError(f"scene {i + 1} missing image_prompt")
+        out.append({"narration": narration.strip(), "image_prompt": image_prompt.strip()})
+    return out
+
+
+async def write_script(
+    topic: str,
+    extra_context: str,
+    style: dict,
+    style_key: str | None,
+) -> list[dict]:
+    """Returns validated [{narration, image_prompt}, ...] (style NOT yet applied)."""
+    prompt = _build_prompt(topic, extra_context, style, style_key)
+    messages = [{"role": "user", "content": prompt}]
+
+    last_err: Exception | None = None
+    async with httpx.AsyncClient(timeout=300.0) as client:
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            content = ""
+            try:
+                r = await client.post(
+                    f"{cfg.openrouter_base.rstrip('/')}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {cfg.openrouter_api_key}",
+                        "HTTP-Referer": "https://oneprompt.bot",
+                        "X-Title": "OnePrompt",
+                    },
+                    json={
+                        "model": cfg.openrouter_model,
+                        "messages": messages,
+                        "temperature": 0.8,
+                        "max_tokens": 16000,
+                    },
+                )
+                r.raise_for_status()
+                content = r.json()["choices"][0]["message"]["content"]
+                return _validate_scenes(_extract_json(content))
+            except (json.JSONDecodeError, ValueError, KeyError) as e:
+                # Bad output → tell the model what was wrong and retry.
+                last_err = e
+                log.warning("Script attempt %d/%d invalid: %s", attempt, _MAX_ATTEMPTS, e)
+                messages.append({"role": "assistant", "content": content})
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"Your previous output was invalid: {e}. "
+                        "Return ONLY the JSON object in the exact format specified — "
+                        "no prose, no markdown fences, image_prompt as a plain string."
+                    ),
+                })
+            except httpx.HTTPError as e:
+                last_err = e
+                log.warning("OpenRouter call failed (attempt %d/%d): %s", attempt, _MAX_ATTEMPTS, e)
+
+    raise ScriptError(f"script generation failed after {_MAX_ATTEMPTS} attempts: {last_err}")
