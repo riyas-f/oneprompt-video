@@ -19,28 +19,28 @@ Return ONLY a JSON object, no prose, no markdown fences:
 - "narration" MUST be a single plain string of spoken English only.
 
 ==========  RUNTIME TARGETS  ==========
-- Total runtime: 4:30–5:00 (≈ 650–750 words of narration total).
-- Scene count: 25–30 scenes.
+- Total runtime: <<RUNTIME_RANGE>> (≈ <<WORD_RANGE>> words of narration total).
+- Scene count: <<SCENE_RANGE>> scenes.
 - Per-scene narration: 20–30 words, ≈ 9–12 seconds spoken.
 - Reading level: 6th–8th grade. Short sentences. Active voice. Concrete nouns. No filler ("basically", "actually", "you know").
 - No emojis, no markdown, no asterisks, no formatting. Plain spoken English only.
-- IMPORTANT: a 5-minute video lives or dies on retention. Re-hook every 45–60 seconds with a fresh question, twist, or callback. Never let the viewer feel safe to swipe.
+- IMPORTANT: retention decides everything. Re-hook every 45–60 seconds with a fresh question, twist, or callback. Never let the viewer feel safe to swipe.
 
 ==========  NARRATION STRUCTURE (mandatory)  ==========
-Treat the 5 minutes as 4 acts. Hooks at the start of every act.
+Treat the video as 4 acts. Hooks at the start of every act.
 
-ACT 1 — HOOK + PROMISE (≈ first 30s, scenes 1–3):
+ACT 1 — HOOK + PROMISE (scenes 1–<<A1_END>>):
    Scene 1: open with a bold claim, surprising stat, pattern-interrupt question, or "you've been doing X wrong." Drop the viewer mid-action.
-   Scene 2: stakes. Why does this matter now? Loss-aversion, curiosity gap, or social proof.
-   Scene 3: state the promise — what they'll know by the end. Plant the BIG loop you'll close in the final scene.
+   Then: stakes — why does this matter now? Loss-aversion, curiosity gap, or social proof.
+   Last act-1 scene: state the promise — what they'll know by the end. Plant the BIG loop you'll close in the final scene.
 
-ACT 2 — FOUNDATION (≈ next 75s, scenes 4–9):
+ACT 2 — FOUNDATION (scenes <<A2_START>>–<<A2_END>>):
    First wave of value. One new idea per scene. End each scene with forward momentum: "…but here's the twist." / "…and it gets stranger." Open small loops, close them within 2–3 scenes.
 
-ACT 3 — ESCALATION (≈ next 90s, scenes 10–17):
-   Stakes rise. Counter-intuitive turn, or "here's where most people get it wrong." Insert a RE-HOOK scene around scene 12–13 ("Wait — it's worse than that.") to pull anyone drifting back in.
+ACT 3 — ESCALATION (scenes <<A3_START>>–<<A3_END>>):
+   Stakes rise. Counter-intuitive turn, or "here's where most people get it wrong." Insert a RE-HOOK scene around scene <<REHOOK>> ("Wait — it's worse than that.") to pull anyone drifting back in.
 
-ACT 4 — REVELATION + PAYOFF (≈ final 75–90s, scenes 18–N):
+ACT 4 — REVELATION + PAYOFF (scenes <<A4_START>>–N):
    The biggest insight or twist. Close the BIG loop from Act 1. Final scene: punchline + soft, native CTA ("Follow for more like this." / "Comment what you'd do." / "Save this — you'll need it."). Avoid hard sells.
 
 Rules across all acts:

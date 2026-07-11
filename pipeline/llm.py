@@ -20,9 +20,32 @@ log = logging.getLogger(__name__)
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "scene_writer.md"
 _MAX_ATTEMPTS = 3
 
-# Scene-count sanity bounds — outside these the model misread the brief.
-_MIN_SCENES = 8
-_MAX_SCENES = 60
+# ≈6 scenes and ≈145 narration words per minute of video.
+_SCENES_PER_MIN = 6
+_WORDS_PER_MIN = 145
+
+
+def _runtime_tokens(minutes: int) -> dict:
+    """Compute the prompt's runtime targets + 4-act scene boundaries."""
+    minutes = max(1, min(int(minutes), 15))
+    n = minutes * _SCENES_PER_MIN
+    lo, hi = max(4, n - 2), n + 2
+    a1 = max(2, round(n * 0.11))
+    a2 = max(a1 + 1, round(n * 0.33))
+    a3 = max(a2 + 1, round(n * 0.63))
+    return {
+        "<<RUNTIME_RANGE>>": f"about {minutes} minute{'s' if minutes > 1 else ''}",
+        "<<WORD_RANGE>>": f"{(minutes * _WORDS_PER_MIN) - 40}–{(minutes * _WORDS_PER_MIN) + 40}",
+        "<<SCENE_RANGE>>": f"{lo}–{hi}",
+        "<<A1_END>>": str(a1),
+        "<<A2_START>>": str(a1 + 1),
+        "<<A2_END>>": str(a2),
+        "<<A3_START>>": str(a2 + 1),
+        "<<A3_END>>": str(a3),
+        "<<A4_START>>": str(a3 + 1),
+        "<<REHOOK>>": str(max(a2 + 1, round(n * 0.45))),
+        "_target_scenes": n,
+    }
 
 
 class ScriptError(RuntimeError):
@@ -39,15 +62,20 @@ def _style_summary(style: dict) -> str:
     return "; ".join(p for p in parts if p and not p.endswith(": "))
 
 
-def _build_prompt(topic: str, extra_context: str, style: dict, style_key: str | None) -> str:
+def _build_prompt(topic: str, extra_context: str, style: dict, style_key: str | None,
+                  target_minutes: int) -> str:
     template = _PROMPT_PATH.read_text(encoding="utf-8")
-    return (
+    out = (
         template
         .replace("<<TOPIC>>", topic.strip())
         .replace("<<EXTRA_CONTEXT>>", (extra_context or "").strip() or "(none)")
         .replace("<<STYLE_KEY>>", style_key or "custom")
         .replace("<<STYLE_SUMMARY>>", _style_summary(style))
     )
+    for token, value in _runtime_tokens(target_minutes).items():
+        if token.startswith("<<"):
+            out = out.replace(token, value)
+    return out
 
 
 def _extract_json(text: str) -> dict:
@@ -65,7 +93,7 @@ def _extract_json(text: str) -> dict:
     return json.loads(s)
 
 
-def _validate_script(payload: dict) -> dict:
+def _validate_script(payload: dict, target_scenes: int) -> dict:
     """Returns {"characters": {id: desc}, "scenes": [...]} — both validated."""
     characters = payload.get("characters")
     if not isinstance(characters, dict):
@@ -80,8 +108,11 @@ def _validate_script(payload: dict) -> dict:
     scenes = payload.get("scenes")
     if not isinstance(scenes, list) or not scenes:
         raise ValueError("'scenes' missing or empty")
-    if not (_MIN_SCENES <= len(scenes) <= _MAX_SCENES):
-        raise ValueError(f"implausible scene count: {len(scenes)}")
+    lo, hi = max(3, int(target_scenes * 0.6)), int(target_scenes * 1.6) + 2
+    if not (lo <= len(scenes) <= hi):
+        raise ValueError(
+            f"scene count {len(scenes)} is far from the ~{target_scenes} requested"
+        )
     out = []
     for i, s in enumerate(scenes):
         if not isinstance(s, dict):
@@ -111,10 +142,12 @@ async def write_script(
     extra_context: str,
     style: dict,
     style_key: str | None,
+    target_minutes: int = 3,
 ) -> dict:
     """Returns validated {"characters": {id: desc}, "scenes": [{narration,
     image_prompt, character_id}, ...]} (style NOT yet applied)."""
-    prompt = _build_prompt(topic, extra_context, style, style_key)
+    prompt = _build_prompt(topic, extra_context, style, style_key, target_minutes)
+    target_scenes = _runtime_tokens(target_minutes)["_target_scenes"]
     messages = [{"role": "user", "content": prompt}]
 
     last_err: Exception | None = None
@@ -138,7 +171,7 @@ async def write_script(
                 )
                 r.raise_for_status()
                 content = r.json()["choices"][0]["message"]["content"]
-                return _validate_script(_extract_json(content))
+                return _validate_script(_extract_json(content), target_scenes)
             except (json.JSONDecodeError, ValueError, KeyError) as e:
                 # Bad output → tell the model what was wrong and retry.
                 last_err = e

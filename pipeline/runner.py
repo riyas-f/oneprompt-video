@@ -85,11 +85,13 @@ async def submit(
     style_key: str | None,
     voice: str,
     modal_url: str,
+    duration_minutes: int = 3,
 ) -> None:
     """Fire-and-forget from the /create cog. Returns immediately."""
     _active.add(job_id)
     asyncio.create_task(
-        _run_job(discord_id, job_id, topic, extra_context, style, style_key, voice, modal_url)
+        _run_job(discord_id, job_id, topic, extra_context, style, style_key,
+                 voice, modal_url, duration_minutes)
     )
 
 
@@ -103,6 +105,7 @@ async def _run_job(
     style_key: str | None,
     voice: str,
     modal_url: str,
+    duration_minutes: int = 3,
 ) -> None:
     assert _sem is not None
     async with _sem:
@@ -116,7 +119,8 @@ async def _run_job(
 
             # ── script ────────────────────────────────────────────────────
             await db.set_job_stage(job_id, "script")
-            script = await llm.write_script(topic, extra_context, style, style_key)
+            script = await llm.write_script(topic, extra_context, style, style_key,
+                                            target_minutes=duration_minutes)
             scenes = assembly.assemble(script["scenes"], style)
             characters = assembly.sheet_prompts(script.get("characters") or {}, style)
             await db.save_job_artifacts(job_id, {

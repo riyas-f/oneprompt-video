@@ -11,9 +11,23 @@ from config import cfg
 from database import models as db
 from services import embeds
 from services.api_client import request_video
-from styles.presets import get_style_object
+from styles.presets import STYLE_PRESETS, get_style_object
 
 log = logging.getLogger(__name__)
+
+# Per-video style choices for /create: every preset + the user's saved custom.
+STYLE_CHOICES = [
+    app_commands.Choice(name=f"{p['emoji']} {p['label']}", value=key)
+    for key, p in STYLE_PRESETS.items()
+] + [app_commands.Choice(name="✨ My custom style", value="custom")]
+
+DURATION_CHOICES = [
+    app_commands.Choice(name="1 minute", value=1),
+    app_commands.Choice(name="2 minutes", value=2),
+    app_commands.Choice(name="3 minutes", value=3),
+    app_commands.Choice(name="5 minutes", value=5),
+]
+DEFAULT_DURATION = 3
 
 
 class CreateForm(discord.ui.Modal, title="Generate a video"):
@@ -31,13 +45,18 @@ class CreateForm(discord.ui.Modal, title="Generate a video"):
         max_length=1000,
     )
 
-    def __init__(self, modal_url: str, *, meter: str = "none", quota: int = 0, trialing: bool = False):
-        """meter: 'none' (no counter), 'free' (lifetime free counter), 'period' (monthly period counter)."""
+    def __init__(self, modal_url: str, *, meter: str = "none", quota: int = 0,
+                 trialing: bool = False, style_override: str | None = None,
+                 duration: int = DEFAULT_DURATION):
+        """meter: 'none' (no counter), 'free' (lifetime free counter), 'period' (monthly period counter).
+        style_override: preset key, 'custom', or None (= saved preference)."""
         super().__init__()
         self._modal_url = modal_url
         self._meter = meter
         self._quota = quota
         self._trialing = trialing
+        self._style_override = style_override
+        self._duration = duration
 
     async def on_submit(self, interaction: discord.Interaction):
         topic = str(self.topic.value).strip()
@@ -55,10 +74,28 @@ class CreateForm(discord.ui.Modal, title="Generate a video"):
             )
             return
 
-        job_id = await db.create_job(interaction.user.id, topic, extra or None)
-
         prefs = await db.get_user_preferences(interaction.user.id)
-        style_obj = get_style_object(prefs.get("style_preset_key"), prefs.get("style_custom"))
+
+        # Per-video style: explicit choice wins; otherwise the saved preference.
+        if self._style_override == "custom":
+            if not prefs.get("style_custom"):
+                await interaction.response.send_message(
+                    embed=embeds.error(
+                        "No custom style saved",
+                        "Run `/style` and pick **Custom…** to define one first.",
+                    ),
+                    ephemeral=True,
+                )
+                return
+            style_obj, style_key = prefs["style_custom"], None
+        elif self._style_override:
+            style_obj = get_style_object(self._style_override, None)
+            style_key = self._style_override
+        else:
+            style_obj = get_style_object(prefs.get("style_preset_key"), prefs.get("style_custom"))
+            style_key = prefs.get("style_preset_key")
+
+        job_id = await db.create_job(interaction.user.id, topic, extra or None)
 
         try:
             if cfg.pipeline == "internal":
@@ -69,9 +106,10 @@ class CreateForm(discord.ui.Modal, title="Generate a video"):
                     topic=topic,
                     extra_context=extra,
                     style=style_obj,
-                    style_key=prefs.get("style_preset_key"),
+                    style_key=style_key,
                     voice=prefs.get("voice") or "af_heart",
                     modal_url=self._modal_url,
+                    duration_minutes=self._duration,
                 )
             else:
                 resp = await request_video(
@@ -81,7 +119,7 @@ class CreateForm(discord.ui.Modal, title="Generate a video"):
                     discord_id=interaction.user.id,
                     job_id=job_id,
                     style=style_obj,
-                    style_key=prefs.get("style_preset_key"),
+                    style_key=style_key,
                     voice=prefs.get("voice") or "af_heart",
                 )
                 api_job_id = resp.get("api_job_id")
@@ -127,7 +165,17 @@ class VideoCog(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="create", description="Generate a new video")
-    async def create(self, interaction: discord.Interaction):
+    @app_commands.describe(
+        style="Art style for this video (default: your saved /style)",
+        duration="Video length (default: 3 minutes)",
+    )
+    @app_commands.choices(style=STYLE_CHOICES, duration=DURATION_CHOICES)
+    async def create(
+        self,
+        interaction: discord.Interaction,
+        style: app_commands.Choice[str] | None = None,
+        duration: app_commands.Choice[int] | None = None,
+    ):
         await db.upsert_user(interaction.user.id, interaction.user.name)
         user = await db.get_user(interaction.user.id)
         tier = (user or {}).get("tier") or "free"
@@ -245,7 +293,11 @@ class VideoCog(commands.Cog):
             return
 
         await interaction.response.send_modal(
-            CreateForm(modal_url=modal_url, meter=meter, quota=quota, trialing=trialing_flag)
+            CreateForm(
+                modal_url=modal_url, meter=meter, quota=quota, trialing=trialing_flag,
+                style_override=style.value if style else None,
+                duration=duration.value if duration else DEFAULT_DURATION,
+            )
         )
 
 
