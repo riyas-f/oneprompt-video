@@ -32,13 +32,15 @@ class ModalClient:
             return False
 
     async def submit(self, scenes: list[dict], voice: str, job_key: str,
-                     tts_speed: float = 1.0) -> str:
+                     tts_speed: float = 1.0,
+                     characters: dict | None = None) -> str:
         """Submit a render. Returns 'async' or 'sync' (caller picks the wait path)."""
         payload = {
             "scenes": scenes,
             "voice": voice,
             "tts_speed": tts_speed,
             "job_key": job_key,
+            "characters": characters or None,
         }
         async with httpx.AsyncClient(timeout=_SHORT) as c:
             r = await c.post(f"{self.base}/generate-video-async", json=payload)

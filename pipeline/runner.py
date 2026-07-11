@@ -116,14 +116,17 @@ async def _run_job(
 
             # ── script ────────────────────────────────────────────────────
             await db.set_job_stage(job_id, "script")
-            raw_scenes = await llm.write_script(topic, extra_context, style, style_key)
-            scenes = assembly.assemble(raw_scenes, style)
+            script = await llm.write_script(topic, extra_context, style, style_key)
+            scenes = assembly.assemble(script["scenes"], style)
+            characters = assembly.sheet_prompts(script.get("characters") or {}, style)
             await db.save_job_artifacts(job_id, {
                 "modal_url": modal_url, "voice": voice, "scenes": scenes,
+                "characters": characters,
             })
 
             # ── render ────────────────────────────────────────────────────
-            video = await _render(discord_id, job_id, scenes, voice, modal_url, progress_msg)
+            video = await _render(discord_id, job_id, scenes, voice, modal_url,
+                                  progress_msg, characters)
 
             # ── upload + deliver ──────────────────────────────────────────
             await _deliver(discord_id, job_id, video, progress_msg)
@@ -142,12 +145,13 @@ async def _render(
     voice: str,
     modal_url: str,
     progress_msg,
+    characters: dict | None = None,
 ) -> bytes:
     client = ModalClient(modal_url)
     key = _job_key(discord_id, job_id)
     total = len(scenes)
 
-    mode = await client.submit(scenes, voice, key)
+    mode = await client.submit(scenes, voice, key, characters=characters)
     await db.set_job_stage(job_id, "rendering")
     await _edit(progress_msg, embeds.processing(
         "Rendering your video",
@@ -294,7 +298,8 @@ async def _resume_job(job: dict, art: dict) -> None:
             if st.get("status") == "unknown":
                 # Modal never saw it (or GC'd it) — resubmit; volume checkpoints
                 # make a resubmit resume from the last finished scene anyway.
-                mode = await client.submit(scenes, voice, key)
+                mode = await client.submit(scenes, voice, key,
+                                           characters=art.get("characters"))
                 if mode == "sync":
                     video = await client.generate_sync(scenes, voice)
                     await _deliver(discord_id, job_id, video, None)

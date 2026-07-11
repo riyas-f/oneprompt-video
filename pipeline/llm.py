@@ -65,7 +65,18 @@ def _extract_json(text: str) -> dict:
     return json.loads(s)
 
 
-def _validate_scenes(payload: dict) -> list[dict]:
+def _validate_script(payload: dict) -> dict:
+    """Returns {"characters": {id: desc}, "scenes": [...]} — both validated."""
+    characters = payload.get("characters")
+    if not isinstance(characters, dict):
+        characters = {}
+    characters = {
+        str(k): v.strip() for k, v in characters.items()
+        if isinstance(v, str) and v.strip()
+    }
+    if len(characters) > 3:
+        raise ValueError(f"too many characters: {len(characters)}")
+
     scenes = payload.get("scenes")
     if not isinstance(scenes, list) or not scenes:
         raise ValueError("'scenes' missing or empty")
@@ -84,8 +95,15 @@ def _validate_scenes(payload: dict) -> list[dict]:
             image_prompt = ", ".join(str(v) for v in image_prompt.values() if v)
         if not isinstance(image_prompt, str) or not image_prompt.strip():
             raise ValueError(f"scene {i + 1} missing image_prompt")
-        out.append({"narration": narration.strip(), "image_prompt": image_prompt.strip()})
-    return out
+        cid = s.get("character_id")
+        if cid is not None and str(cid) not in characters:
+            cid = None  # unknown id → treat as a character-free scene
+        out.append({
+            "narration": narration.strip(),
+            "image_prompt": image_prompt.strip(),
+            "character_id": str(cid) if cid is not None else None,
+        })
+    return {"characters": characters, "scenes": out}
 
 
 async def write_script(
@@ -93,8 +111,9 @@ async def write_script(
     extra_context: str,
     style: dict,
     style_key: str | None,
-) -> list[dict]:
-    """Returns validated [{narration, image_prompt}, ...] (style NOT yet applied)."""
+) -> dict:
+    """Returns validated {"characters": {id: desc}, "scenes": [{narration,
+    image_prompt, character_id}, ...]} (style NOT yet applied)."""
     prompt = _build_prompt(topic, extra_context, style, style_key)
     messages = [{"role": "user", "content": prompt}]
 
@@ -119,7 +138,7 @@ async def write_script(
                 )
                 r.raise_for_status()
                 content = r.json()["choices"][0]["message"]["content"]
-                return _validate_scenes(_extract_json(content))
+                return _validate_script(_extract_json(content))
             except (json.JSONDecodeError, ValueError, KeyError) as e:
                 # Bad output → tell the model what was wrong and retry.
                 last_err = e

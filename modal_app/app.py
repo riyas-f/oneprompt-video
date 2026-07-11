@@ -55,9 +55,27 @@ image = (
         "uv pip install --system --compile-bytecode "
         "'kokoro>=0.9.4' soundfile ffmpeg-python Pillow"
     )
+    # Qwen-Edit's text encoder (Qwen2.5-VL) imports torchvision; peft is
+    # diffusers' LoRA backend for the Lightning distill. Pinned torchvision
+    # matches torch==2.7.1+cu128 so the torch layer stays cached.
+    .run_commands(
+        "uv pip install --system --compile-bytecode torchvision==0.22.1 "
+        "--extra-index-url https://download.pytorch.org/whl/cu128"
+    )
+    .run_commands("uv pip install --system --compile-bytecode peft")
 )
 
 MODEL_NAME = "Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32"
+
+# Character consistency: scenes tagged with a character_id are re-rendered from
+# a reference sheet by Qwen-Image-Edit-2511 (same SDNQ quant stack), distilled
+# to 4 steps by the Lightning LoRA (~15s/scene on L40S at QEDIT resolution).
+QWEN_EDIT_MODEL = "Disty0/Qwen-Image-Edit-2511-SDNQ-uint4-svd-r32"
+LIGHTNING_REPO = "lightx2v/Qwen-Image-Edit-2511-Lightning"
+LIGHTNING_FILE = "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
+# Character scenes render at reduced internal resolution (~15s vs ~30s at full
+# 1080p); _make_clip upscales to the video's target size with Lanczos.
+QEDIT_WIDTH, QEDIT_HEIGHT = 1344, 768
 
 # NB: keep these as POSIX strings — str(Path("/cache")) is "\cache" when
 # deploying from Windows, which corrupts the image definition.
@@ -135,10 +153,38 @@ class VideoGenerator:
         # CUDA's stream scheduler interleaves it cleanly with diffusion kernels.
         self.tts = KPipeline(lang_code="a")
 
+        print("→ Loading Qwen-Image-Edit-2511 (character scenes)...")
+        # Both models fit together on L40S (~27 GB of 48). Any failure here
+        # falls back to text-only rendering rather than blocking video gen.
+        self.qedit = None
+        try:
+            qedit = diffusers.QwenImageEditPlusPipeline.from_pretrained(
+                QWEN_EDIT_MODEL,
+                torch_dtype=torch.bfloat16,
+                cache_dir=CACHE_DIR,
+            )
+            qedit.transformer = apply_sdnq_options_to_model(
+                qedit.transformer, use_quantized_matmul=True
+            )
+            qedit.text_encoder = apply_sdnq_options_to_model(
+                qedit.text_encoder, use_quantized_matmul=True
+            )
+            qedit.to("cuda")
+            # Without the 4-step Lightning distill this model needs 40 CFG
+            # steps (~2 min/scene) — too slow for production, so all-or-nothing.
+            qedit.load_lora_weights(
+                LIGHTNING_REPO, weight_name=LIGHTNING_FILE, cache_dir=CACHE_DIR
+            )
+            self.qedit = qedit
+            print("✓ Qwen-Edit + Lightning ready")
+        except Exception as e:
+            print(f"⚠ Qwen-Edit unavailable ({e}) — character scenes render text-only")
+
         # Defensive locks: even though we use max_inputs=1 by default,
         # these protect against any future change to concurrency settings.
         self._pipe_lock = threading.Lock()
         self._tts_lock = threading.Lock()
+        self._qedit_lock = threading.Lock()
         # Volume commits happen from the ffmpeg thread pool; serialize them.
         self._commit_lock = threading.Lock()
 
@@ -176,6 +222,35 @@ class VideoGenerator:
                 generator=gen,
             ).images[0]
 
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    def _generate_character_scene(self, ref_image, scene_prompt: str,
+                                  seed: Optional[int] = None) -> bytes:
+        """Render a scene featuring a known character, conditioned on its sheet."""
+        import random
+        if seed is None:
+            seed = random.randint(0, 2**32 - 1)
+        gen = torch.manual_seed(seed)
+        instruction = (
+            "Redraw the exact character from the reference image into a completely "
+            "new scene, keeping the character's design, proportions, line style and "
+            f"colors identical. New scene: {scene_prompt}"
+        )
+        with self._qedit_lock, torch.inference_mode():
+            img = self.qedit(
+                image=[ref_image],
+                prompt=instruction,
+                width=QEDIT_WIDTH,
+                height=QEDIT_HEIGHT,
+                num_inference_steps=4,
+                true_cfg_scale=1.0,
+                guidance_scale=1.0,
+                negative_prompt=" ",
+                num_images_per_prompt=1,
+                generator=gen,
+            ).images[0]
         buf = BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()
@@ -245,6 +320,7 @@ class VideoGenerator:
         image_width: int = 1920,
         image_height: int = 1080,
         job_key: Optional[str] = None,
+        characters: Optional[dict] = None,
     ) -> bytes:
         """
         Pipelined generation.
@@ -260,11 +336,40 @@ class VideoGenerator:
         """
         try:
             return self._generate_video_impl(
-                scenes, voice, tts_speed, image_width, image_height, job_key
+                scenes, voice, tts_speed, image_width, image_height, job_key,
+                characters,
             )
         except Exception as e:
             _report_progress(job_key, stage="failed", error=str(e)[:500])
             raise
+
+    @staticmethod
+    def _safe_char_id(cid: str) -> str:
+        return "".join(c for c in str(cid) if c.isalnum() or c in "-_")[:32] or "char"
+
+    def _prepare_character_sheets(self, characters: Optional[dict],
+                                  job_dir: Optional[Path],
+                                  job_key: Optional[str]) -> dict:
+        """Generate (or restore from checkpoint) one reference image per character."""
+        sheets: dict = {}
+        if not characters or self.qedit is None:
+            return sheets
+        _report_progress(job_key, stage="sheets", total=len(characters))
+        for cid, sheet_prompt in characters.items():
+            if not isinstance(sheet_prompt, str) or not sheet_prompt.strip():
+                continue
+            ck = (job_dir / f"char_{self._safe_char_id(cid)}.png") if job_dir else None
+            if ck is not None and ck.exists():
+                sheets[cid] = PILImage.open(ck).convert("RGB")
+                continue
+            png = self._generate_image(sheet_prompt, 1024, 1024)
+            if ck is not None:
+                ck.write_bytes(png)
+                with self._commit_lock:
+                    cache_volume.commit()
+            sheets[cid] = PILImage.open(BytesIO(png)).convert("RGB")
+            print(f"  character sheet ready: {cid}")
+        return sheets
 
     def _generate_video_impl(
         self,
@@ -274,6 +379,7 @@ class VideoGenerator:
         image_width: int,
         image_height: int,
         job_key: Optional[str],
+        characters: Optional[dict] = None,
     ) -> bytes:
         valid = [(i, s) for i, s in enumerate(scenes)
                  if s.get("narration") and s.get("image_prompt")]
@@ -300,6 +406,11 @@ class VideoGenerator:
                 print(f"→ Resuming: {len(done_clips)}/{N} clips already checkpointed")
 
         todo = [(i, s) for i, s in valid if i not in done_clips]
+
+        # Character reference sheets (only when the payload declares characters
+        # and Qwen-Edit loaded; otherwise falls through to text-only rendering).
+        sheets = self._prepare_character_sheets(characters, job_dir, job_key)
+
         _report_progress(job_key, stage="rendering", scene=len(done_clips), total=N)
 
         with tempfile.TemporaryDirectory() as td:
@@ -328,10 +439,17 @@ class VideoGenerator:
                 clip_futures: dict = {}
 
                 for n, (i, scene) in enumerate(todo):
-                    print(f"  [{i + 1}/{N}] image…")
-                    image_bytes = self._generate_image(
-                        scene["image_prompt"], image_width, image_height
-                    )
+                    cid = scene.get("character_id")
+                    if cid and cid in sheets:
+                        print(f"  [{i + 1}/{N}] character scene ({cid})…")
+                        image_bytes = self._generate_character_scene(
+                            sheets[cid], scene["image_prompt"]
+                        )
+                    else:
+                        print(f"  [{i + 1}/{N}] image…")
+                        image_bytes = self._generate_image(
+                            scene["image_prompt"], image_width, image_height
+                        )
 
                     # By the time the image is done, the corresponding audio
                     # is almost always already finished (TTS is faster than
@@ -385,6 +503,11 @@ class VideoGenerator:
                         (job_dir / f"scene_{i}.mp4").unlink(missing_ok=True)
                     except Exception:
                         pass
+                for ck in job_dir.glob("char_*.png"):
+                    try:
+                        ck.unlink()
+                    except Exception:
+                        pass
                 with self._commit_lock:
                     cache_volume.commit()
 
@@ -423,6 +546,10 @@ def flask_app():
             if not s.get("image_prompt"):
                 return None, (jsonify({"error": f"Scene {i + 1} missing 'image_prompt'"}), 400)
 
+        characters = first.get("characters")
+        if not isinstance(characters, dict):
+            characters = None
+
         return {
             "scenes": scenes,
             "voice": first.get("voice", "af_heart"),
@@ -431,6 +558,7 @@ def flask_app():
             "image_height": first.get("image_height", 1080),
             "return_b64": first.get("return_base64", False),
             "job_key": str(first.get("job_key") or "").strip(),
+            "characters": characters,
         }, None
 
     def _valid_job_key(job_key: str) -> bool:
@@ -460,6 +588,7 @@ def flask_app():
                 tts_speed=tts_speed,
                 image_width=image_width,
                 image_height=image_height,
+                characters=p["characters"],
             )
 
             if return_b64:
@@ -502,6 +631,7 @@ def flask_app():
                 image_width=p["image_width"],
                 image_height=p["image_height"],
                 job_key=job_key,
+                characters=p["characters"],
             )
             print(f"→ Async job {job_key}: {len(p['scenes'])} scenes spawned "
                   f"(call {call.object_id})")
