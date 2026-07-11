@@ -25,7 +25,7 @@ class CreateForm(discord.ui.Modal, title="Generate a video"):
     )
     extra = discord.ui.TextInput(
         label="Extra Details (optional)",
-        placeholder="e.g. Keep it under 60 seconds, friendly tone, suitable for teens",
+        placeholder="e.g. Focus on the psychology angle, dramatic tone, end with a question for viewers",
         required=False,
         style=discord.TextStyle.paragraph,
         max_length=1000,
