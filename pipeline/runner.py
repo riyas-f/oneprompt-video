@@ -245,7 +245,10 @@ async def _fail(discord_id: int, job_id: int, error: str, progress_msg) -> None:
 # ─── background: resume + sweep ───────────────────────────────────────────────
 async def _background() -> None:
     assert _bot is not None
-    await _bot.wait_until_ready()
+    # Can't use wait_until_ready(): setup() runs before bot.start(), and
+    # discord.py raises if it's called before login begins. Poll instead.
+    while not _bot.is_ready():
+        await asyncio.sleep(2)
 
     if cfg.pipeline == "internal":
         await _resume_all()
