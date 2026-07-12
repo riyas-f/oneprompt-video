@@ -56,11 +56,14 @@ def _verify(request: web.Request):
     """Returns the Whop user id or None."""
     from whop_sdk.lib.verify_user_token import verify_user_token
     try:
-        payload = verify_user_token(dict(request.headers))
-        if cfg.whop_app_id and payload.app_id != cfg.whop_app_id:
-            return None
+        # app_id is a required kwarg; the SDK validates the token's aud
+        # claim against it (None skips that check when WHOP_APP_ID is unset).
+        payload = verify_user_token(
+            dict(request.headers), app_id=cfg.whop_app_id or None
+        )
         return payload.user_id
-    except Exception:
+    except Exception as e:
+        log.warning("Whop user-token verification failed: %s", e)
         return None
 
 
