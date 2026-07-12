@@ -160,6 +160,9 @@ def _duration_options() -> str:
 
 
 def _upgrade_buttons() -> str:
+    # Plans not configured yet → no broken buy buttons.
+    if not (cfg.whop_plan_pro and cfg.whop_plan_studio):
+        return '<span class="muted">Paid plans coming soon.</span>'
     return (
         f'<button class="secondary" onclick="buyPlan(\'{cfg.whop_plan_pro}\')">'
         f'Pro — ${cfg.price_usd}/mo · {cfg.pro_monthly_minutes} min</button> '
@@ -326,7 +329,7 @@ async def checkout(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "bad json"}, status=400)
     plan_id = str(body.get("plan") or "")
-    if plan_id not in (cfg.whop_plan_pro, cfg.whop_plan_studio):
+    if not plan_id or plan_id not in (cfg.whop_plan_pro, cfg.whop_plan_studio):
         return web.json_response({"error": "unknown plan"}, status=400)
     try:
         conf = await _client().checkout_configurations.create(
