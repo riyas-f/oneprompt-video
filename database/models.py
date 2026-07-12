@@ -162,6 +162,36 @@ async def get_user_by_customer_id(customer_id: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
+# ─── whop app users ───────────────────────────────────────────────────────────
+async def get_or_create_whop_user(whop_user_id: str, synthetic_id: int) -> dict:
+    """Whop-app users live in the same users table under a synthetic negative id."""
+    async with pool().acquire() as c:
+        row = await c.fetchrow(
+            "SELECT * FROM users WHERE whop_user_id = $1", whop_user_id
+        )
+        if row:
+            return dict(row)
+        row = await c.fetchrow(
+            """
+            INSERT INTO users (discord_id, discord_username, whop_user_id,
+                               billing_source, notify_channel)
+            VALUES ($1, $2, $3, 'whop', 'app')
+            ON CONFLICT (discord_id) DO UPDATE SET whop_user_id = EXCLUDED.whop_user_id
+            RETURNING *
+            """,
+            synthetic_id, f"whop:{whop_user_id}", whop_user_id,
+        )
+        return dict(row)
+
+
+async def set_billing_source(discord_id: int, source: str) -> None:
+    async with pool().acquire() as c:
+        await c.execute(
+            "UPDATE users SET billing_source = $2 WHERE discord_id = $1",
+            discord_id, source,
+        )
+
+
 # ─── modal credentials ────────────────────────────────────────────────────────
 async def save_modal_credentials(discord_id: int, token_id_enc: str, token_secret_enc: str) -> None:
     async with pool().acquire() as c:

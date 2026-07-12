@@ -302,6 +302,11 @@ def build_app(bot: discord.Client) -> web.Application:
     app.router.add_post("/webhooks/polar", polar_webhook)
     app.router.add_post("/webhooks/video-ready", video_ready)
     app.router.add_post("/webhooks/discord", discord_webhook)
+
+    if cfg.whop_api_key:
+        from webhooks import whop_app
+        whop_app.mount(app)
+
     return app
 
 

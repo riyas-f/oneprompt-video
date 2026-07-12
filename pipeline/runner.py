@@ -359,6 +359,8 @@ async def _sweep() -> None:
 # ─── discord helpers ──────────────────────────────────────────────────────────
 async def _dm(discord_id: int, embed: discord.Embed):
     assert _bot is not None
+    if discord_id < 0:
+        return None  # synthetic id (Whop-app user) — delivery happens in-app
     try:
         user = await _bot.fetch_user(discord_id)
         return await user.send(embed=embed)

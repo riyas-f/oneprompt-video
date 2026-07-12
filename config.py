@@ -62,6 +62,13 @@ class Config:
     # Shared secret between bot and the Modal render app (async endpoints).
     render_api_key: str
 
+    # Whop embedded app (all optional; /whop mounts only when api key is set).
+    whop_api_key: str
+    whop_app_id: str
+    whop_plan_pro: str
+    whop_plan_studio: str
+    whop_webhook_secret: str
+
     support_user_id: int
 
     webhook_host: str
@@ -107,6 +114,11 @@ def load() -> Config:
         job_timeout_minutes=int(os.getenv("JOB_TIMEOUT_MINUTES", "45")),
         pipeline_max_concurrent=int(os.getenv("PIPELINE_MAX_CONCURRENT", "4")),
         render_api_key=os.getenv("RENDER_API_KEY", ""),
+        whop_api_key=os.getenv("WHOP_API_KEY", ""),
+        whop_app_id=os.getenv("WHOP_APP_ID", ""),
+        whop_plan_pro=os.getenv("WHOP_PLAN_PRO", ""),
+        whop_plan_studio=os.getenv("WHOP_PLAN_STUDIO", ""),
+        whop_webhook_secret=os.getenv("WHOP_WEBHOOK_SECRET", ""),
         support_user_id=int(_req("SUPPORT_DISCORD_USER_ID")),
         webhook_host=os.getenv("WEBHOOK_HOST", "0.0.0.0"),
         webhook_port=int(os.getenv("WEBHOOK_PORT", "8080")),
