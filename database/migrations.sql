@@ -23,6 +23,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS is_trialing BOOLEAN NOT NULL DEFAULT 
 -- Quotas are metered in render-minutes (a 3-minute video spends 3).
 -- videos_used_period is retained but dormant since the switch.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS minutes_used_period INT NOT NULL DEFAULT 0;
+-- Multi-rail billing: which system owns this user's subscription state.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS billing_source TEXT NOT NULL DEFAULT 'polar';
+-- Whop-app users (embedded iframe) — mapped here; discord_id holds a synthetic
+-- id for users who arrived via Whop and never connected Discord.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS whop_user_id TEXT UNIQUE;
+-- How to deliver finished videos: discord DM or in-app only.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_channel TEXT NOT NULL DEFAULT 'discord';
 
 CREATE TABLE IF NOT EXISTS modal_credentials (
     discord_id BIGINT PRIMARY KEY REFERENCES users(discord_id) ON DELETE CASCADE,
